@@ -65,7 +65,9 @@ Fichiers étiquetés : `data/raw/lycos_labelled/` (5 CSV, 844 Mo, un par jour)
 | Jeudi (jeu) | 110 448 | webattack_bruteforce 1 360 · webattack_xss 661 · webattack_sql_injection 12 | **test** |
 | Vendredi (ven) | 286 438 | portscan 160 106 · ddos 95 683 · bot 735 | **test** |
 
-- 83 colonnes, 0 valeur manquante, 0 infinie, 11 doublons au total.
+- 83 colonnes, 0 valeur manquante, 0 infinie, 0 doublon (timestamp lu en float64 ; les 11 doublons vus par `explore.py` venaient du cast float32).
+- `flag_urg`, `fwd_flag_urg`, `bwd_flag_urg` sont constantes (toujours 0) : à retirer.
+- 12 classes d'attaque sur 13 viennent de `172.16.0.1` (seul bot vient de 5 postes `192.168.10.x`) : la fuite par IP est confirmée.
 - Pas d'infiltration (retirée par les auteurs).
 - Colonne cible : `label` (valeurs en minuscules, `benign` = normal).
 - Colonnes identifiants (JAMAIS utilisées comme caractéristiques du modèle) :
@@ -110,6 +112,7 @@ Elles rendent un scan visible même sur un seul flux.
 - Le code réutilisable va dans `src/isocrates/` (les notebooks l'importent).
 - Les figures sont enregistrées dans `reports/` (PNG, 150 dpi).
 - Un commit Git par étape terminée, message en français.
+- **`JOURNAL.md` à la racine : à compléter après CHAQUE action** (nouvelle entrée datée « Étape N » : ce qui a été fait, pourquoi, fichiers créés/modifiés, chiffres réellement obtenus, décisions ouvertes). Bedis l'envoie à une autre IA pour qu'elle lui explique le travail : écrire clairement, sans jargon non expliqué. Mettre aussi à jour « Questions ouvertes » et « Prochaine étape ».
 
 Notebooks prévus :
 - `01_donnees_lycos.ipynb` : exploration, qualité, classes par jour
@@ -149,10 +152,13 @@ Fait :
 - [x] LYCOS-IDS2017 téléchargé et étiqueté (`data/raw/lycos_labelled/`)
 - [x] `src/isocrates/ml/explore.py` : exploration rapide (attention, il caste `timestamp` en float32 : ses Parquet sont à supprimer)
 
+- [x] `data/processed/` vide (plus de Parquet faussés par `explore.py`)
+- [x] Unité de `timestamp` vérifiée : **microsecondes** Unix, en UTC (heure locale du banc d'essai = UTC−3). Ce sont des entiers exacts en float64, triés dans chaque CSV. `flow_duration` est aussi en µs (max 120 s, le timeout de flux). Jeudi ne couvre que 3 h (11:59 → 14:59 UTC) : l'après-midi de l'infiltration a été retiré.
+
+- [x] `src/isocrates/ml/data.py` (`load_day` : bons types) + notebook `01_donnees_lycos.ipynb` exécuté ; figures `reports/01_*.png`
+
 À faire maintenant :
-- [ ] Supprimer `data/processed/*.parquet` produits par `explore.py`
-- [ ] Notebook `01_donnees_lycos.ipynb` (exploration documentée + graphique des attaques par jour)
-- [ ] Vérifier l'unité de `timestamp`
+- [ ] **Décision ouverte** : avec le 80/20 temporel (par jour ou global), la validation ne contient presque aucune attaque (par jour : 11 heartbleed seulement). Choisir comment régler le RF/MLP avant le notebook 02.
 - [ ] `src/isocrates/ml/prepare.py` + notebook `02_preparation.ipynb`
 - [ ] Premier commit
 

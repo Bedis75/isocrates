@@ -143,11 +143,88 @@ La règle prévoit : train = les 80 % les plus anciens de lundi, mardi et mercre
 
 ---
 
+## Étape 3 · 2 novembre 2026 · Décision sur le découpage, puis notebook 02 (préparation)
+
+### 3.1 Décision prise par Bedis
+
+Le **découpage temporel par classe** proposé à l'étape 2 (voir 2.5) est retenu :
+- pour chaque attaque connue (lundi → mercredi), ses 80 % de flux les plus anciens vont en **train** et ses 20 % les plus récents en **validation** ;
+- le trafic normal (`benign`) est coupé 80/20 dans chaque jour ;
+- le **test** reste jeudi + vendredi en entier.
+
+On ne mélange jamais au hasard, et pour chaque classe la validation est toujours *après* l'entraînement. La règle 1 de `CLAUDE.md` a été réécrite en conséquence. Ce changement reste à justifier dans le rapport.
+
+### 3.2 Fichier créé : `src/isocrates/ml/prepare.py`
+
+- `add_window_features(df)` : ajoute 4 **caractéristiques de fenêtre**. Pour chaque flux, on regarde tous les flux émis par **la même IP source pendant la même minute** :
+  - `w_conn` : combien de connexions ;
+  - `w_dst_ports` : combien de ports de destination différents (un scan de ports en touche des centaines) ;
+  - `w_dst_hosts` : combien de machines différentes contactées ;
+  - `w_rst_rate` : la part de flux contenant un paquet RST (connexion refusée ou coupée, typique d'un scan).
+
+  Les minutes sont des fenêtres **fixes** (de hh:mm:00 à hh:mm:59), calculées jour par jour. L'IP source sert ici seulement à regrouper : elle n'est jamais donnée au modèle.
+- `temporal_split(df)` : renvoie « train » ou « val » pour chaque flux, selon la règle 3.1.
+- `constant_columns(df, cols)` : trouve les colonnes qui ont une seule valeur. On l'applique sur train uniquement, car on ne doit rien décider en regardant la validation ou le test.
+- `model_features(dropped)` : liste finale des caractéristiques données aux modèles.
+- `save_split(...)` : écrit les fichiers Parquet et `features.json`.
+
+### 3.3 Fichier créé : `notebooks/02_preparation.ipynb`
+
+Il charge lundi, mardi et mercredi avec leurs fenêtres, découpe train/val, vérifie l'ordre temporel, retire les colonnes constantes, prépare le test (jeudi + vendredi), trace une figure, contrôle les données et exporte le tout.
+
+**Fichiers produits** (non versionnés, car `data/` est dans `.gitignore`) :
+- `data/processed/train.parquet` (129 Mo), `val.parquet` (33 Mo), `test.parquet` (73 Mo). Chacun contient les identifiants (`day`, `flow_id`, IP, ports, `timestamp`, `label`) et les 78 caractéristiques.
+- `data/processed/features.json` : la liste des 78 caractéristiques et la description du découpage.
+
+**Figure :** `reports/02_fenetres_par_classe.png`. Ce sont des boîtes à moustaches des 4 caractéristiques de fenêtre pour chaque classe, en gris pour le benign, en bleu pour les attaques connues (train/val) et en orange pour les attaques inconnues (test).
+
+### 3.4 Résultats obtenus
+
+| Ensemble | Flux | dont attaques | Classes d'attaque | Jours |
+|---|---|---|---|---|
+| train | 945 640 | 146 610 | 7 | lun, mar, mer |
+| val | 236 415 | 36 656 | 7 | lun, mar, mer |
+| test | 655 443 | 258 557 | 6 | jeu, ven |
+
+- La somme fait bien 1 837 498 flux : aucun n'est perdu.
+- Chaque attaque connue a exactement 20 % de ses flux en validation. Heartbleed fait exception avec 8 flux en train et 3 en val, trop peu pour une mesure fiable.
+- **Contrôle automatique réussi :** pour chaque groupe, le premier flux de validation est postérieur au dernier flux d'entraînement.
+- `flag_urg`, `fwd_flag_urg` et `bwd_flag_urg` sont retirées, car elles sont constantes sur train. Il reste **78 caractéristiques** (74 de flux + 4 de fenêtre).
+- Après relecture des fichiers, `timestamp` est bien resté en `float64`.
+
+**Ce que montrent les fenêtres** (médianes par classe) :
+
+| Classe | w_conn | w_dst_ports | w_dst_hosts | w_rst_rate |
+|---|---|---|---|---|
+| benign | ≈ 247 | 4 | ≈ 33 | ≈ 0,001 |
+| ftp_patator / ssh_patator | 66 / 50 | 1 | 1 | 0 |
+| webattack_xss / bruteforce (test) | 35 | 1 | 1 | 0 |
+| bot (test) | 19 | 4 | 5 | 0 |
+| ddos (test) | 4 903 | 1 | 1 | 0 |
+| dos_hulk | 9 688 | 1 | 1 | 0 |
+| portscan (test) | 43 868 | **997** | 1 | **0,99** |
+
+- **Portscan est très facile à repérer** grâce aux fenêtres : près de 1 000 ports différents par minute et presque toujours un RST.
+- **DDoS ressemble à dos_hulk** (des milliers de connexions par minute vers un seul port). Le Random Forest devrait donc au moins le classer comme « attaque », même avec un mauvais nom.
+- **Les attaques web ressemblent aux attaques patator** (quelques dizaines de connexions par minute vers un seul port) : risque de confusion.
+- **Bot ressemble au trafic normal :** c'est probablement l'attaque la plus difficile à détecter.
+- Un grand `w_conn` n'est pas à lui seul un signe d'attaque, car beaucoup de sources normales sont des serveurs très actifs.
+
+**Limites à citer dans le rapport :**
+1. La validation benign vient de la fin de journée, alors que la validation d'une attaque vient de la fin de cette attaque (souvent le matin). Les deux ne correspondent donc pas aux mêmes heures.
+2. Les fenêtres sont fixes et non glissantes : une rafale à cheval sur deux minutes est coupée en deux.
+
+**Aucune normalisation (scaler) ici.** Elle sera ajustée sur train dans les notebooks 03 et 04, pour ne rien apprendre du test.
+
+**Fichiers modifiés :** `CLAUDE.md` (règle 1 réécrite, état d'avancement, planning).
+
+---
+
 ## Questions ouvertes (à trancher par Bedis)
 
-1. **Découpage train/val** pour le Random Forest et le MLP : garder le 80/20 strict, ou passer au 80/20 temporel par classe ? (voir 2.5)
-2. **Premier commit Git** pas encore fait. Il comprendra `data.py`, le notebook 01, les figures, `CLAUDE.md`, `.gitignore` et ce journal.
+1. **Commit Git de l'étape 02** pas encore fait (`prepare.py`, notebook 02, figure, `CLAUDE.md`, ce journal).
+2. Le planning a environ une semaine de retard : la semaine S2 (ML) se termine le 3 novembre.
 
 ## Prochaine étape prévue
 
-`src/isocrates/ml/prepare.py` et `notebooks/02_preparation.ipynb` : nettoyage, retrait des colonnes constantes, caractéristiques de fenêtre par IP source et par minute (`w_conn`, `w_dst_ports`, `w_dst_hosts`, `w_rst_rate`), découpage temporel, puis export de `data/processed/{train,val,test}.parquet` et `features.json`.
+`notebooks/03_supervise_rf_mlp.ipynb` : Random Forest multi-classe comparé à un MLP, entraînés sur train et réglés sur val, avec des métriques par classe, puis une explication des décisions du Random Forest avec SHAP.

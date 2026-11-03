@@ -80,8 +80,7 @@ Autres fichiers dans `data/raw/lycos/lycos-ids2017/` : flux bruts LycoSTand, CSV
 ## 4. Règles méthodologiques (NON négociables)
 
 1. **Découpage temporel uniquement**, jamais aléatoire.
-   - train = 80 % les plus anciens (par `timestamp`) de lun, mar, mer
-   - val = 20 % les plus récents de lun, mar, mer (seuils, réglages)
+   - train/val sur lun, mar, mer, **temporel par classe** (décidé le 2 nov. 2026) : pour chaque attaque, ses 80 % de flux les plus anciens en train, ses 20 % les plus récents en val ; benign coupé 80/20 dans chaque jour. Raison : un 80/20 par jour ne laissait que 11 heartbleed en val (notebook 01). À justifier dans le rapport.
    - test = jeu + ven (attaques jamais vues par le modèle supervisé)
    Justification : Arp et al. 2022 (piège P3 data snooping), Ndichu et al. 2026 (Table 4).
 2. **Ne PAS utiliser `create_datasets.py`** des auteurs : il mélange au hasard.
@@ -137,14 +136,14 @@ Notebooks prévus :
 
 | Semaine | Dates | Objectif |
 |---|---|---|
-| S1 | 21 → 27 oct. | Données : exploration, préparation, découpage (EN COURS) |
+| S1 | 21 → 27 oct. | Données : exploration, préparation, découpage (FAIT le 2 nov.) |
 | S2 | 28 oct. → 3 nov. | ML : RF/MLP, autoencodeur/IF, SHAP, incidents |
 | S3 | 4 → 10 nov. | RAG : ATT&CK, mitigations, D3FEND |
 | S4 | 11 → 17 nov. | Agents LangGraph de bout en bout |
 | S5 | 18 → 24 nov. | Streamlit + évaluation |
 | S6 | 25 → 30 nov. | Rapport + présentation |
 
-## 9. État actuel (21 octobre 2026)
+## 9. État actuel (2 novembre 2026)
 
 Fait :
 - [x] Dépôt cloné, structure créée (`notebooks/`, `src/isocrates/{ml,rag,agents,app}`, `eval/`, `reports/`, `data/`)
@@ -157,10 +156,12 @@ Fait :
 
 - [x] `src/isocrates/ml/data.py` (`load_day` : bons types) + notebook `01_donnees_lycos.ipynb` exécuté ; figures `reports/01_*.png`
 
+- [x] Commit « Étape 01 » (4be80ff)
+- [x] `src/isocrates/ml/prepare.py` + notebook `02_preparation.ipynb` : fenêtres 60 s, découpage par classe, `data/processed/{train,val,test}.parquet` + `features.json` (78 caractéristiques)
+
 À faire maintenant :
-- [ ] **Décision ouverte** : avec le 80/20 temporel (par jour ou global), la validation ne contient presque aucune attaque (par jour : 11 heartbleed seulement). Choisir comment régler le RF/MLP avant le notebook 02.
-- [ ] `src/isocrates/ml/prepare.py` + notebook `02_preparation.ipynb`
-- [ ] Premier commit
+- [ ] Commit « Étape 02 »
+- [ ] Notebook `03_supervise_rf_mlp.ipynb` (S2 : 28 oct. → 3 nov., en retard d'environ une semaine)
 
 ## 10. Références clés
 

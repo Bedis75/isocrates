@@ -220,11 +220,109 @@ Il charge lundi, mardi et mercredi avec leurs fenêtres, découpe train/val, vé
 
 ---
 
+## Étape 4 · 3 novembre 2026 · Code simplifié en « code d'étudiant »
+
+**Demande de Bedis :** tout le code doit pouvoir être compris et expliqué à la professeure par un étudiant de M2 Data Science. Il doit donc être simple et lisible, sans astuces, avec les mêmes résultats.
+
+**Ce qui a été fait :**
+- `src/isocrates/ml/data.py`, `prepare.py` et `supervised.py` sont réécrits avec des boucles `for` simples, des variables intermédiaires nommées, une docstring par fonction et des commentaires en français qui expliquent le *pourquoi*. Les lambdas, les chaînes de méthodes pandas et le pipeline sklearn ont été retirés.
+  - Exemple, le découpage train/val (`temporal_split`) se lit maintenant comme une recette : « pour chaque groupe (une attaque, ou le benign d'un jour), je trie les flux par temps ; les premiers 80 % vont en train, le reste en val ».
+  - Exemple, la mise à l'échelle du MLP : avant, elle était cachée dans un pipeline ; maintenant ce sont deux lignes visibles, `signed_log(X)` puis `StandardScaler`.
+- Les notebooks 01 et 02 sont réécrits dans le même style et relancés.
+- **Vérification :** une empreinte (hash) des fichiers `train/val/test.parquet` a été calculée avant et après la réécriture. Elle est **identique**, donc les données produites sont exactement les mêmes. Tous les chiffres des notebooks 01 et 02 sont inchangés.
+- La règle « style code d'étudiant » est ajoutée dans `CLAUDE.md` (section 6), pour toutes les prochaines étapes.
+
+---
+
+## Étape 5 · 3 novembre 2026 · Notebook 03 : Random Forest vs MLP, explications SHAP
+
+### 5.1 Notions utiles
+
+- **Random Forest (RF) :** un ensemble de 100 arbres de décision. Chaque arbre pose une suite de questions du type « `w_conn` > 500 ? », et la forêt vote. C'est le modèle de référence sur les données en tableau.
+- **MLP (perceptron multicouche) :** un petit réseau de neurones. Il a besoin de données à la même échelle. On applique donc d'abord `sign(x)·log(1+|x|)`, qui écrase les valeurs énormes comme les débits ou les durées en microsecondes, puis une standardisation (moyenne 0, écart-type 1) calculée sur train seulement.
+- **Époque :** un passage complet du MLP sur toutes les données d'entraînement.
+- **Précision / rappel / F1, par classe :**
+  - la précision répond à « quand le modèle dit X, a-t-il raison ? » ;
+  - le rappel répond à « parmi les vrais X, combien en trouve-t-il ? » ;
+  - le F1 est la moyenne harmonique des deux.
+- **Macro-F1 :** la moyenne des F1 des 8 classes. Une petite classe compte autant qu'une grande, donc on ne peut pas tricher en ne réussissant que le benign.
+- **Poids de classe :** ils donnent plus d'importance aux flux des classes rares pendant l'apprentissage.
+- **SHAP :** une méthode qui calcule, pour un flux donné, combien chaque caractéristique a poussé le modèle vers une classe (valeur positive) ou l'en a éloigné (valeur négative). `TreeExplainer` est sa version exacte et rapide pour les forêts d'arbres.
+
+### 5.2 Fichiers
+
+- **Créé :** `src/isocrates/ml/supervised.py`. On y trouve le chargement des Parquet (`load_sets`), `signed_log`, les poids de classe (`sqrt_balanced_weights`), l'entraînement du RF (`fit_rf`) et du MLP (`fit_mlp`), les tableaux de métriques (`per_class_report`, `detection_by_class`) et la sauvegarde des modèles.
+- **Créé :** `notebooks/03_supervise_rf_mlp.ipynb`, exécuté de bout en bout (environ 16 min).
+- **Figures :**
+  - `reports/03_mlp_epoques.png` : courbes d'apprentissage du MLP ;
+  - `reports/03_confusion_val.png` : matrices de confusion sur val ;
+  - `reports/03_detection_test.png` : détection par classe sur le test ;
+  - `reports/03_shap_global.png` : caractéristiques les plus influentes par classe ;
+  - `reports/03_shap_exemple.png` : explication d'une alerte.
+- **Modèles :** `models/rf.joblib` (0,8 Mo) et `models/mlp.joblib` (0,3 Mo, avec son scaler). Ils ne sont pas versionnés dans Git.
+
+### 5.3 Méthode
+
+1. **RF :** 6 essais, avec une profondeur maximale de 10, 20 ou illimitée, et avec ou sans poids de classe. On garde celui qui a le meilleur macro-F1 sur **val**.
+2. **MLP :** 3 tailles de réseau (64-32, 128-64, 256-128), 20 époques chacune. Après chaque époque, on mesure le macro-F1 sur val et on garde la meilleure époque. On n'utilise pas l'arrêt automatique de sklearn, car il tirerait sa validation **au hasard**, ce qui est interdit.
+3. **Déséquilibre :** chaque flux du MLP reçoit un poids égal à la racine carrée du poids « balanced » de sklearn. Le poids « balanced » pur donnerait plus de 10 000 aux 8 flux heartbleed et ferait diverger l'apprentissage.
+4. **Test (attaques jamais vues) :** les modèles ne peuvent pas donner le bon nom, puisqu'ils ne connaissent pas ces attaques. On mesure donc seulement la **détection**, c'est-à-dire la part des flux classés comme « une attaque quelconque ».
+
+### 5.4 Résultats obtenus
+
+**Réglages :** RF avec une profondeur de 10 et sans poids de classe (macro-F1 val **0,968**). MLP 128-64 à l'époque 16 (macro-F1 val **0,964**).
+
+**Val (attaques connues), F1 par classe :**
+
+| Classe | RF | MLP |
+|---|---|---|
+| benign | 1,000 | 1,000 |
+| dos_goldeneye | 0,997 | 0,996 |
+| dos_hulk | 1,000 | 1,000 |
+| dos_slowhttptest | 0,896 | 0,870 |
+| dos_slowloris | 0,884 | 0,861 |
+| ftp_patator | 1,000 | 1,000 |
+| heartbleed (3 flux) | 1,000 | 1,000 |
+| ssh_patator | 0,967 | 0,983 |
+
+Le point faible commun est dos_slowloris, pris pour dos_slowhttptest dans 19 % (RF) à 24 % (MLP) des cas : ce sont deux attaques « lentes » très proches.
+
+**Test (attaques inconnues), part des flux détectés comme attaque :**
+
+| Classe | RF | MLP |
+|---|---|---|
+| ddos | 98,6 % | 100 % |
+| webattack_xss | 0,2 % | 99,7 % |
+| webattack_bruteforce | 0 % | 94,0 % |
+| webattack_sql_injection | 0 % | 16,7 % (2 sur 12) |
+| portscan | 0 % | 0 % |
+| bot | 0 % | 0 % |
+| benign (fausses alertes) | 1 flux sur 396 886 | 46 flux (0,012 %) |
+
+- Le RF range la DDoS sous « dos_hulk », un nom faux mais une alerte utile.
+- **Le MLP généralise mieux aux attaques web.** Une hypothèse, non démontrée : un arbre ne peut répondre qu'avec des zones vues pendant l'entraînement, alors que les frontières d'un réseau de neurones se prolongent au-delà.
+- **Portscan et bot échappent aux deux modèles.** C'est le rôle du détecteur d'anomalies (notebook 04).
+
+**SHAP :**
+- Les caractéristiques de fenêtre sont parmi les plus utilisées : `w_conn` pour dos_hulk et goldeneye, `w_dst_hosts` pour presque toutes les classes.
+- Pour ftp et ssh_patator, c'est `dst_port` (ports 21 et 22) qui compte le plus. Cette règle est simple mais fragile si l'attaquant change de port.
+- **Exemple d'alerte :** seuls 35 flux de portscan sur 160 106 sont signalés par le RF. Celui qui est expliqué est appelé « dos_goldeneye » (probabilité 0,45), surtout à cause de son grand `w_conn`, alors que `w_dst_ports` = 999 tire dans l'autre sens. **Leçon :** pour une attaque inconnue, l'étiquette du RF n'est qu'un indice, et les agents devront la présenter comme telle.
+
+**Choix pour la suite :** on garde le **RF** dans le pipeline, pour son meilleur macro-F1 sur val, ses fausses alertes plus rares, sa vitesse et l'explication exacte qu'en donne SHAP. La meilleure généralisation du MLP est un résultat à présenter dans la comparaison.
+
+**Corrections en cours de route :**
+- Un premier tirage de l'échantillon SHAP était mal fait : pandas alignait des étiquettes par position au lieu de les aligner par index. Il est remplacé par une boucle simple qui tire 100 flux par classe.
+- Les autres chiffres ne changent pas.
+
+**Fichiers modifiés :** `CLAUDE.md` (état d'avancement).
+
+---
+
 ## Questions ouvertes (à trancher par Bedis)
 
-1. **Commit Git de l'étape 02** pas encore fait (`prepare.py`, notebook 02, figure, `CLAUDE.md`, ce journal).
-2. Le planning a environ une semaine de retard : la semaine S2 (ML) se termine le 3 novembre.
+1. **Commit Git** des étapes 4 et 5 pas encore fait.
+2. Le planning a environ une semaine de retard : la semaine S2 (ML) se termine aujourd'hui, 3 novembre, et le notebook 04 n'est pas commencé.
 
 ## Prochaine étape prévue
 
-`notebooks/03_supervise_rf_mlp.ipynb` : Random Forest multi-classe comparé à un MLP, entraînés sur train et réglés sur val, avec des métriques par classe, puis une explication des décisions du Random Forest avec SHAP.
+`notebooks/04_anomalies_ae_if.ipynb` : détecteurs d'anomalies (autoencodeur contre Isolation Forest), entraînés sur le **benign** de train uniquement, avec un seuil au 99e percentile du score sur le benign de val. Objectif : attraper portscan, bot et les attaques web, que le RF ne voit pas. Point à décider : l'autoencodeur était prévu en PyTorch, qui n'est pas installé (téléchargement d'environ 200 Mo en version CPU, ou 2,5 Go en version GPU). Une alternative sans téléchargement est un autoencodeur fait avec `MLPRegressor` de sklearn.

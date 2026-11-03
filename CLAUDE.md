@@ -109,6 +109,7 @@ Elles rendent un scan visible même sur un seul flux.
   3. des sorties visibles (tableaux, graphiques) ;
   4. une cellule « Observations » à la fin.
 - Le code réutilisable va dans `src/isocrates/` (les notebooks l'importent).
+- **Style « code d'étudiant »** : Bedis doit pouvoir expliquer chaque ligne à la professeure. Boucles `for` simples, variables intermédiaires nommées, petites fonctions avec docstring, commentaires en français sur le *pourquoi*. Éviter lambdas, `.pipe`, `np.select`, longues chaînes de méthodes, compréhensions imbriquées, pipelines sklearn quand deux lignes manuelles suffisent.
 - Les figures sont enregistrées dans `reports/` (PNG, 150 dpi).
 - Un commit Git par étape terminée, message en français.
 - **`JOURNAL.md` à la racine : à compléter après CHAQUE action** (nouvelle entrée datée « Étape N » : ce qui a été fait, pourquoi, fichiers créés/modifiés, chiffres réellement obtenus, décisions ouvertes). Bedis l'envoie à une autre IA pour qu'elle lui explique le travail : écrire clairement, sans jargon non expliqué. Mettre aussi à jour « Questions ouvertes » et « Prochaine étape ».
@@ -143,7 +144,7 @@ Notebooks prévus :
 | S5 | 18 → 24 nov. | Streamlit + évaluation |
 | S6 | 25 → 30 nov. | Rapport + présentation |
 
-## 9. État actuel (2 novembre 2026)
+## 9. État actuel (3 novembre 2026)
 
 Fait :
 - [x] Dépôt cloné, structure créée (`notebooks/`, `src/isocrates/{ml,rag,agents,app}`, `eval/`, `reports/`, `data/`)
@@ -159,9 +160,14 @@ Fait :
 - [x] Commit « Étape 01 » (4be80ff)
 - [x] `src/isocrates/ml/prepare.py` + notebook `02_preparation.ipynb` : fenêtres 60 s, découpage par classe, `data/processed/{train,val,test}.parquet` + `features.json` (78 caractéristiques)
 
+- [x] Commit « Étape 02 » (4afef56)
+- [x] Code simplifié en style étudiant (modules + notebooks 01-02 ; données identiques, vérifié par hash)
+- [x] `src/isocrates/ml/supervised.py` + notebook `03_supervise_rf_mlp.ipynb` : RF retenu (profondeur 10, macro-F1 val 0,968) vs MLP 128-64 (0,964) ; modèles dans `models/`
+
 À faire maintenant :
-- [ ] Commit « Étape 02 »
-- [ ] Notebook `03_supervise_rf_mlp.ipynb` (S2 : 28 oct. → 3 nov., en retard d'environ une semaine)
+- [ ] Commit « Étape 03 »
+- [ ] Décider : autoencodeur en PyTorch (à installer, ~200 Mo CPU) ou avec `MLPRegressor` de sklearn
+- [ ] Notebook `04_anomalies_ae_if.ipynb`
 
 ## 10. Références clés
 

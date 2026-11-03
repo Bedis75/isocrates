@@ -1,17 +1,19 @@
-"""Chargement de LYCOS-IDS2017 étiqueté, avec les bons types.
+"""Chargement des données LYCOS-IDS2017 étiquetées.
 
-- `timestamp` : float64 (microsecondes Unix, UTC). JAMAIS float32 (perte d'environ 2 min).
-- caractéristiques de flux : float32 (RAM limitée).
-- identifiants : jamais utilisés comme caractéristiques du modèle.
+Points importants :
+- `timestamp` est lu en float64 (jamais float32, sinon on perd environ 2 minutes de précision).
+- les caractéristiques de flux sont lues en float32 pour économiser la RAM.
+- les colonnes identifiants (IP, ports source, etc.) ne servent jamais de caractéristiques.
 """
 from pathlib import Path
 
 import pandas as pd
 
+# Dossier racine du projet (3 niveaux au-dessus de ce fichier : ml -> isocrates -> src -> racine)
 ROOT = Path(__file__).resolve().parents[3]
 RAW_DIR = ROOT / "data" / "raw" / "lycos_labelled"
 
-# code du jour -> (fichier CSV, rôle dans le découpage temporel)
+# Pour chaque jour : (nom du fichier CSV, rôle dans le découpage)
 DAYS = {
     "lun": ("Monday-WorkingHours.pcap_lycos.csv", "train/val"),
     "mar": ("Tuesday-WorkingHours.pcap_lycos.csv", "train/val"),
@@ -20,41 +22,62 @@ DAYS = {
     "ven": ("Friday-WorkingHours.pcap_lycos.csv", "test"),
 }
 
-LABEL = "label"
-BENIGN = "benign"
-TS = "timestamp"
-TS_PER_SECOND = 1_000_000  # timestamp en microsecondes
+LABEL = "label"          # colonne cible
+BENIGN = "benign"        # valeur de la cible pour le trafic normal
+TS = "timestamp"         # temps du flux, en microsecondes
+TS_PER_SECOND = 1_000_000
 
-# Jamais utilisées comme caractéristiques (fuite d'information ou identifiant)
+# Colonnes jamais utilisées comme caractéristiques (identifiants ou fuite d'information)
 ID_COLS = ["flow_id", "src_addr", "src_port", "dst_addr", TS, LABEL]
 
 
-def day_path(day: str) -> Path:
-    return RAW_DIR / DAYS[day][0]
+def day_path(day):
+    """Chemin du fichier CSV d'un jour ("lun", "mar", ...)."""
+    file_name = DAYS[day][0]
+    return RAW_DIR / file_name
 
 
-def read_header(day: str = "lun") -> list[str]:
-    return pd.read_csv(day_path(day), nrows=0).columns.tolist()
+def read_header(day="lun"):
+    """Liste des noms de colonnes (on lit seulement la première ligne du CSV)."""
+    header = pd.read_csv(day_path(day), nrows=0)
+    return list(header.columns)
 
 
-def feature_columns(columns: list[str]) -> list[str]:
-    """Colonnes utilisables comme caractéristiques (dont dst_port et ip_prot)."""
-    return [c for c in columns if c not in ID_COLS]
+def feature_columns(columns):
+    """Garde les colonnes utilisables comme caractéristiques (toutes sauf ID_COLS)."""
+    features = []
+    for col in columns:
+        if col not in ID_COLS:
+            features.append(col)
+    return features
 
 
-def _dtypes(columns: list[str]) -> dict:
-    types = {c: "float32" for c in feature_columns(columns)}
-    types.update({
-        "flow_id": "string", "src_addr": "string", "dst_addr": "string",
-        "src_port": "int32", "dst_port": "int32", "ip_prot": "int16",
-        TS: "float64", LABEL: "category",
-    })
-    return {c: t for c, t in types.items() if c in columns}
+def column_types(columns):
+    """Type à utiliser pour chaque colonne lors de la lecture du CSV."""
+    special_types = {
+        "flow_id": "string",
+        "src_addr": "string",
+        "dst_addr": "string",
+        "src_port": "int32",
+        "dst_port": "int32",
+        "ip_prot": "int16",
+        TS: "float64",       # précision complète pour le temps
+        LABEL: "category",
+    }
+    types = {}
+    for col in columns:
+        if col in special_types:
+            types[col] = special_types[col]
+        else:
+            types[col] = "float32"   # caractéristique de flux
+    return types
 
 
-def load_day(day: str, usecols: list[str] | None = None) -> pd.DataFrame:
-    """Charge un jour (`lun`, `mar`, `mer`, `jeu`, `ven`) avec les bons types."""
-    columns = usecols or read_header(day)
-    df = pd.read_csv(day_path(day), usecols=columns, dtype=_dtypes(columns))
+def load_day(day, usecols=None):
+    """Charge un jour ("lun", "mar", "mer", "jeu", "ven") avec les bons types.
+    On ajoute une colonne "day" pour savoir d'où vient chaque flux."""
+    if usecols is None:
+        usecols = read_header(day)
+    df = pd.read_csv(day_path(day), usecols=usecols, dtype=column_types(usecols))
     df.insert(0, "day", day)
     return df

@@ -236,6 +236,8 @@ Il charge lundi, mardi et mercredi avec leurs fenêtres, découpe train/val, vé
 
 ## Étape 5 · 3 novembre 2026 · Notebook 03 : Random Forest vs MLP, explications SHAP
 
+> **Note du 4 novembre :** les chiffres et le choix de cette étape viennent de l'ancien découpage 80/20. Ils sont remplacés par ceux de l'étape 6. En particulier, le RF n'est plus meilleur que le MLP sur val.
+
 ### 5.1 Notions utiles
 
 - **Random Forest (RF) :** un ensemble de 100 arbres de décision. Chaque arbre pose une suite de questions du type « `w_conn` > 500 ? », et la forêt vote. C'est le modèle de référence sur les données en tableau.
@@ -318,11 +320,122 @@ Le point faible commun est dos_slowloris, pris pour dos_slowhttptest dans 19 % (
 
 ---
 
+## Étape 6 · 4 novembre 2026 · Ajout d'un « test connu » : découpage 70/15/15
+
+### 6.1 Décision de Bedis et raison
+
+**Problème :** les performances sur les attaques connues étaient mesurées sur la validation. Or la validation sert aussi à choisir les réglages (profondeur du RF, taille du MLP, meilleure époque). On choisit ce qui marche le mieux sur ces flux-là, donc le score obtenu est un peu optimiste. Il faut une mesure sur des flux qui n'ont servi à aucun choix. Mais LYCOS ne rejoue aucune attaque un autre jour : jeudi et vendredi ne contiennent que des attaques inconnues.
+
+**Solution :** garder 15 % des flux les plus récents de lundi, mardi et mercredi comme **test connu**.
+
+| Ensemble | Contenu | Rôle |
+|---|---|---|
+| train | 70 % les plus anciens de chaque attaque ; benign 70 % dans chaque jour | apprendre |
+| val | 15 % suivants | choisir les réglages |
+| test_connu | 15 % les plus récents | mesure finale des attaques connues, **une seule fois** |
+| test_inconnu | jeudi + vendredi en entier | détection des attaques jamais vues |
+
+On ne mélange jamais au hasard : dans chaque groupe, val vient après train et test_connu après val. Le code le vérifie avec un `assert`.
+
+### 6.2 Fichiers
+
+- **Modifiés :** `src/isocrates/ml/prepare.py` (`temporal_split` en 3 parties, nouvelle fonction `split_groups`) et `src/isocrates/ml/supervised.py` (`load_sets`, nouvelle fonction `macro_f1_without`).
+- **Modifiés et relancés :** `notebooks/02_preparation.ipynb` et `notebooks/03_supervise_rf_mlp.ipynb`.
+- **Données :** `data/processed/train.parquet`, `val.parquet`, `test_connu.parquet`, `test_inconnu.parquet` et `features.json`. L'ancien `test.parquet` est supprimé, après avoir vérifié qu'il était identique à `test_inconnu.parquet`.
+- **Figure ajoutée :** `reports/03_confusion_test_connu.png`. Les autres figures des notebooks 02 et 03 sont régénérées.
+- **Modèles :** `models/rf.joblib` et `models/mlp.joblib` sont remplacés.
+- **Modifié :** `CLAUDE.md` (règles 1, 5 et 7, état d'avancement).
+
+### 6.3 Résultats du découpage
+
+| Ensemble | Flux | dont attaques |
+|---|---|---|
+| train | 827 434 | 128 283 |
+| val | 177 308 | 27 490 |
+| test_connu | 177 313 | 27 493 |
+| test_inconnu | 655 443 | 258 557 |
+
+- La somme fait bien 1 837 498 flux.
+- La garantie temporelle est vérifiée pour les 10 groupes.
+- `test_inconnu` a la même empreinte (hash) que l'ancien `test` : il n'a pas changé.
+- Toujours 78 caractéristiques. Les colonnes constantes et le scaler sont décidés sur train seulement.
+
+### 6.4 Heartbleed
+
+Heartbleed n'a que 11 flux : 7 en train, 2 en val, 2 en test_connu. Avec 2 flux, son F1 ne peut valoir que 0, 0,67 ou 1. Il est donc **gardé, mais exclu du macro-F1 de test_connu**, et le notebook le dit clairement. Sa ligne reste affichée à titre indicatif.
+
+Le critère de choix sur val reste le macro-F1 des 8 classes, heartbleed compris. Il a été fixé avant de calculer toute prédiction sur test_connu : une grille a d'abord été lancée sur val seule, sans charger test_connu.
+
+### 6.5 Résultats des modèles
+
+**Réglages choisis sur val :** RF de profondeur 20, sans poids de classe ; MLP (128, 64) à l'époque 9.
+
+**Macro-F1 (sans heartbleed pour pouvoir comparer) :**
+
+| | Val | test_connu | Écart |
+|---|---|---|---|
+| RF | 0,9722 | **0,9574** | −0,015 |
+| MLP | 0,9743 | **0,9334** | −0,041 |
+
+La val était bien optimiste, comme attendu. Le classement s'inverse : le MLP était très légèrement devant sur val, le RF est devant sur test_connu.
+
+**F1 par classe :**
+
+| Classe | RF ancien (val) | RF val | RF test_connu | MLP ancien (val) | MLP val | MLP test_connu |
+|---|---|---|---|---|---|---|
+| benign | 1,000 | 0,999 | 0,999 | 1,000 | 0,999 | 1,000 |
+| dos_goldeneye | 0,997 | 1,000 | 0,997 | 0,996 | 0,993 | 0,996 |
+| dos_hulk | 1,000 | 1,000 | 0,997 | 1,000 | 1,000 | 0,997 |
+| dos_slowhttptest | 0,896 | 0,835 | 0,875 | 0,870 | 0,856 | 0,764 |
+| dos_slowloris | 0,884 | 0,983 | **0,862** | 0,861 | 0,996 | **0,786** |
+| ftp_patator | 1,000 | 1,000 | 1,000 | 1,000 | 1,000 | 1,000 |
+| heartbleed (2-3 flux, non fiable) | 1,000 | 1,000 | 0,667 | 1,000 | 1,000 | 1,000 |
+| ssh_patator | 0,967 | 0,989 | 0,972 | 0,983 | 0,977 | 0,991 |
+
+L'ancienne val (les 20 % les plus récents) n'est pas la nouvelle val (de 70 à 85 %), donc la comparaison de ces colonnes est indicative.
+
+**test_inconnu, part des flux signalés comme attaque :**
+
+| Classe | RF ancien | RF nouveau | MLP ancien | MLP nouveau |
+|---|---|---|---|---|
+| ddos | 98,6 % | 97,7 % | 100 % | 99,9 % |
+| webattack_xss | 0,2 % | 11,3 % | 99,7 % | 99,7 % |
+| webattack_bruteforce | 0 % | 10,9 % | 94,0 % | 94,3 % |
+| webattack_sql_injection | 0 sur 12 | 1 sur 12 | 2 sur 12 | 0 sur 12 |
+| portscan | 35 flux | 55 flux | 0 % | 4 flux |
+| bot | 0 % | 0 % | 0 % | 0 % |
+| benign (fausses alertes) | 1 flux | 10 flux | 46 flux | 38 flux |
+
+### 6.6 Ce qu'il faut retenir
+
+1. **Le test connu a trouvé une faiblesse que la val cachait.** Le F1 de dos_slowloris passe de 0,983 à 0,862 pour le RF et de 0,996 à 0,786 pour le MLP. Sur test_connu, 199 flux slowloris sur 852 sont pris pour dos_slowhttptest par le RF, 289 par le MLP. Ces flux déclenchent quand même une alerte : seul le nom est faux.
+2. **Le comportement change au cours d'une même attaque.** Sur val, le problème était ailleurs : 174 des 730 flux dos_slowhttptest passent pour du benign (RF).
+3. **Le MLP généralise toujours mieux sur les attaques web inconnues.** Portscan et bot restent pour le notebook 04.
+
+### 6.7 Corrections d'affirmations précédentes
+
+- **« Le RF a le meilleur macro-F1 sur val »** (étape 5) n'est plus vrai : 0,9757 contre 0,9775 pour le MLP. Le RF reste dans le pipeline parce que l'architecture le prévoit et que SHAP TreeExplainer l'explique exactement, pas pour ses performances. On ne peut pas non plus s'appuyer sur test_connu pour choisir (règle 7).
+- **« La profondeur 10 est la meilleure »** (étape 5) ne tient plus : sur la nouvelle val, la profondeur 20 fait mieux. Le grand écart observé avant (0,968 contre 0,939) venait vraisemblablement de heartbleed (3 flux en val), mais l'ancienne val n'existant plus, ce n'est pas vérifié.
+- **« Le RF ne voit aucune attaque web »** dépendait du réglage : il en détecte maintenant environ 11 %.
+- **La cellule Observations du notebook 03** était vide dans le commit de l'étape 03, contrairement à ce qui avait été annoncé. Elle est maintenant remplie.
+
+### 6.8 Limites à citer dans le rapport
+
+**Phrase de limite :** « Le test connu vient du même jour que l'entraînement et le suit immédiatement dans le temps, car LYCOS-IDS2017 ne rejoue aucune attaque un autre jour. Ses scores mesurent donc la suite d'une attaque déjà vue et sont plus faciles à obtenir que la détection d'une attaque rejouée un autre jour. »
+
+Autres limites :
+- La garantie temporelle vaut dans chaque groupe, pas entre groupes : le benign de test_connu vient de la fin de journée, alors que l'attaque vient souvent du matin.
+- Les fenêtres sont calculées avant le découpage : deux flux de la même minute, de part et d'autre d'une coupure, partagent les mêmes valeurs `w_*`.
+
+---
+
 ## Questions ouvertes (à trancher par Bedis)
 
-1. **Commit Git** des étapes 4 et 5 pas encore fait.
-2. Le planning a environ une semaine de retard : la semaine S2 (ML) se termine aujourd'hui, 3 novembre, et le notebook 04 n'est pas commencé.
+1. **Autoencodeur :** PyTorch (environ 200 Mo à télécharger en version CPU) ou `MLPRegressor` de sklearn (aucun téléchargement) ?
+2. **Critère de choix du MLP :** heartbleed décide du choix de la taille (128, 64), qui serait dernière sans lui. Le changer maintenant serait suspect, puisque test_connu a déjà été vu ; les écarts sont d'ailleurs très faibles (0,9743 à 0,9770). La proposition est de garder ce choix et de le signaler dans le rapport.
+3. **Commit Git à compléter :** le commit ddfc5d3 a été fait pendant que le notebook 03 tournait. Il contient le code, mais pas le notebook exécuté, ses figures, les observations ni ce journal.
+4. Le planning a environ une semaine de retard : la semaine S2 (ML) s'est terminée le 3 novembre et le notebook 04 n'est pas commencé.
 
 ## Prochaine étape prévue
 
-`notebooks/04_anomalies_ae_if.ipynb` : détecteurs d'anomalies (autoencodeur contre Isolation Forest), entraînés sur le **benign** de train uniquement, avec un seuil au 99e percentile du score sur le benign de val. Objectif : attraper portscan, bot et les attaques web, que le RF ne voit pas. Point à décider : l'autoencodeur était prévu en PyTorch, qui n'est pas installé (téléchargement d'environ 200 Mo en version CPU, ou 2,5 Go en version GPU). Une alternative sans téléchargement est un autoencodeur fait avec `MLPRegressor` de sklearn.
+`notebooks/04_anomalies_ae_if.ipynb` : détecteurs d'anomalies (autoencodeur contre Isolation Forest), entraînés sur le **benign** de train uniquement, avec un seuil au 99e percentile du score sur le benign de val. Objectif : attraper portscan, bot et les attaques web sur test_inconnu.

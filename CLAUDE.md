@@ -80,15 +80,16 @@ Autres fichiers dans `data/raw/lycos/lycos-ids2017/` : flux bruts LycoSTand, CSV
 ## 4. Règles méthodologiques (NON négociables)
 
 1. **Découpage temporel uniquement**, jamais aléatoire.
-   - train/val sur lun, mar, mer, **temporel par classe** (décidé le 2 nov. 2026) : pour chaque attaque, ses 80 % de flux les plus anciens en train, ses 20 % les plus récents en val ; benign coupé 80/20 dans chaque jour. Raison : un 80/20 par jour ne laissait que 11 heartbleed en val (notebook 01). À justifier dans le rapport.
-   - test = jeu + ven (attaques jamais vues par le modèle supervisé)
+   - lun, mar, mer, **temporel par classe, 70/15/15** (décidé le 4 nov. 2026) : pour chaque attaque, ses 70 % de flux les plus anciens en train, les 15 % suivants en val (réglages, seuils), les 15 % les plus récents en test_connu ; benign coupé 70/15/15 dans chaque jour. Dans chaque groupe, val vient après train et test_connu après val.
+   - test_inconnu = jeu + ven en entier (attaques jamais vues par le modèle supervisé).
+   Raisons : par classe, car un 80/20 par jour ne laissait que 11 heartbleed en val (notebook 01) ; test_connu, car la val sert à choisir les réglages (scores un peu optimistes) et LYCOS ne rejoue aucune attaque un autre jour. Heartbleed (11 flux, 2 en test_connu) est exclu du macro-F1 de test_connu. Limite : test_connu vient du même jour que le train, juste après lui, donc c'est plus facile qu'une attaque rejouée un autre jour. À justifier dans le rapport.
    Justification : Arp et al. 2022 (piège P3 data snooping), Ndichu et al. 2026 (Table 4).
 2. **Ne PAS utiliser `create_datasets.py`** des auteurs : il mélange au hasard.
 3. **Ne jamais caster `timestamp` en float32** : précision perdue (environ 2 minutes). Le lire en `float64` (`dtype={"timestamp": "float64"}`) et vérifier son unité (secondes, ms ou µs) avant les fenêtres de temps.
 4. **IP et ports source exclus des caractéristiques** (les attaquants ont toujours les mêmes IP : fuite d'information). Ils servent seulement au regroupement et aux caractéristiques de fenêtre.
-5. **Métriques par classe**, pas seulement globales (fort déséquilibre). Priorité au **rappel** sur les attaques du test.
+5. **Métriques par classe**, pas seulement globales (fort déséquilibre). Priorité au **rappel** sur les attaques de test_connu et test_inconnu.
 6. Le Random Forest ne connaît aucune attaque de jeu/ven : c'est voulu. L'autoencodeur doit les attraper.
-7. Ajustements (scaler, seuils) **ajustés sur train/val uniquement**, jamais sur test.
+7. Ajustements (scaler, seuils, réglages) **ajustés sur train/val uniquement**, jamais sur test_connu ni test_inconnu. test_connu se mesure une seule fois, réglages figés.
 8. Aucun résultat inventé : seuls les chiffres réellement obtenus vont dans le rapport.
 
 ## 5. Caractéristiques de fenêtre à ajouter
@@ -116,8 +117,8 @@ Elles rendent un scan visible même sur un seul flux.
 
 Notebooks prévus :
 - `01_donnees_lycos.ipynb` : exploration, qualité, classes par jour
-- `02_preparation.ipynb` : nettoyage, fenêtres, découpage temporel → `data/processed/{train,val,test}.parquet` + `features.json`
-- `03_supervise_rf_mlp.ipynb` : RF multi-classe vs MLP, SHAP
+- `02_preparation.ipynb` : nettoyage, fenêtres, découpage temporel → `data/processed/{train,val,test_connu,test_inconnu}.parquet` + `features.json`
+- `03_supervise_rf_mlp.ipynb` : RF multi-classe vs MLP, mesure finale sur test_connu, détection sur test_inconnu, SHAP
 - `04_anomalies_ae_if.ipynb` : autoencodeur vs Isolation Forest, seuil au 99e percentile de val
 - `05_fusion_incidents.ipynb` : fusion des scores, regroupement en incidents JSON
 - `06_rag_attack.ipynb` : bases ATT&CK, mitigations, D3FEND dans ChromaDB + BM25
@@ -144,7 +145,7 @@ Notebooks prévus :
 | S5 | 18 → 24 nov. | Streamlit + évaluation |
 | S6 | 25 → 30 nov. | Rapport + présentation |
 
-## 9. État actuel (3 novembre 2026)
+## 9. État actuel (4 novembre 2026)
 
 Fait :
 - [x] Dépôt cloné, structure créée (`notebooks/`, `src/isocrates/{ml,rag,agents,app}`, `eval/`, `reports/`, `data/`)
@@ -165,7 +166,10 @@ Fait :
 - [x] `src/isocrates/ml/supervised.py` + notebook `03_supervise_rf_mlp.ipynb` : RF retenu (profondeur 10, macro-F1 val 0,968) vs MLP 128-64 (0,964) ; modèles dans `models/`
 
 À faire maintenant :
-- [ ] Commit « Étape 03 »
+- [x] Commit « Étape 03 » (6e248de)
+- [x] Découpage 70/15/15 avec test_connu : `prepare.py`, notebooks 02 et 03 relancés. RF retenu : profondeur 20 (macro-F1 val 0,9757 ; test_connu sans heartbleed 0,9574). MLP 128-64 époque 9 (0,9775 ; 0,9334)
+- [x] Commit « Étape 03 bis » (ddfc5d3) : code seulement, fait pendant que le notebook 03 tournait
+- [ ] Commit des résultats du test connu (notebook 03 exécuté, figures, observations, journal)
 - [ ] Décider : autoencodeur en PyTorch (à installer, ~200 Mo CPU) ou avec `MLPRegressor` de sklearn
 - [ ] Notebook `04_anomalies_ae_if.ipynb`
 

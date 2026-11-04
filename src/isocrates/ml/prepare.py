@@ -1,10 +1,11 @@
 """Préparation des données : caractéristiques de fenêtre, découpage train/val, export.
 
-Découpage choisi le 2 novembre 2026 (voir JOURNAL.md) :
-- lun, mar, mer -> train/val, découpage temporel PAR CLASSE :
-  pour chaque attaque, ses 80 % de flux les plus anciens vont en train, les 20 % les plus récents en val ;
+Découpage choisi le 4 novembre 2026 (voir JOURNAL.md) :
+- lun, mar, mer -> train/val/test_connu, découpage temporel PAR CLASSE :
+  pour chaque attaque, ses 70 % de flux les plus anciens vont en train, les 15 % suivants en val,
+  les 15 % les plus récents en test_connu ;
   pour le trafic normal (benign), même règle mais jour par jour.
-- jeu, ven -> test, en entier.
+- jeu, ven -> test_inconnu, en entier.
 On ne mélange jamais les flux au hasard.
 """
 import json
@@ -15,7 +16,8 @@ from isocrates.ml.data import BENIGN, LABEL, TS, TS_PER_SECOND, feature_columns,
 
 WINDOW_SECONDS = 60
 WINDOW_COLS = ["w_conn", "w_dst_ports", "w_dst_hosts", "w_rst_rate"]
-TRAIN_FRAC = 0.8
+TRAIN_FRAC = 0.70
+VAL_FRAC = 0.15    # le reste (15 %) va en test_connu
 
 
 def add_window_features(df):
@@ -56,26 +58,33 @@ def load_with_windows(days):
     return pd.concat(tables, ignore_index=True)
 
 
-def temporal_split(df, frac=TRAIN_FRAC):
-    """Ajoute une colonne "split" qui vaut "train" ou "val".
-
-    Groupes : chaque classe d'attaque forme un groupe ; le benign forme un groupe par jour.
-    Dans chaque groupe, on trie les flux par temps : les premiers 80 % vont en train,
-    le reste en val. Ainsi la val est toujours APRÈS le train.
-    """
-    # 1) Nom du groupe de chaque flux
+def split_groups(df):
+    """Nom du groupe de chaque flux : le nom de l'attaque, ou "benign_lun", "benign_mar", etc."""
     group = df[LABEL].astype(str)
     is_benign = df[LABEL] == BENIGN
     group[is_benign] = "benign_" + df.loc[is_benign, "day"]
+    return group
 
-    # 2) Par défaut tout est en val, puis on met les plus anciens de chaque groupe en train
-    df["split"] = "val"
+
+def temporal_split(df, train_frac=TRAIN_FRAC, val_frac=VAL_FRAC):
+    """Ajoute une colonne "split" qui vaut "train", "val" ou "test_connu".
+
+    Groupes : chaque classe d'attaque forme un groupe ; le benign forme un groupe par jour.
+    Dans chaque groupe, on trie les flux par temps : les premiers 70 % vont en train,
+    les 15 % suivants en val, le reste en test_connu.
+    Ainsi, dans un groupe, val vient APRÈS train et test_connu vient APRÈS val.
+    """
+    group = split_groups(df)
+
+    # Par défaut tout est en test_connu, puis on place le début de chaque groupe en train et val
+    df["split"] = "test_connu"
     for name in group.unique():
         rows = df[group == name]
         rows = rows.sort_values(TS, kind="stable")
-        n_train = int(len(rows) * frac)
-        first_rows = rows.index[:n_train]
-        df.loc[first_rows, "split"] = "train"
+        n_train = int(len(rows) * train_frac)
+        n_train_val = int(len(rows) * (train_frac + val_frac))
+        df.loc[rows.index[:n_train], "split"] = "train"
+        df.loc[rows.index[n_train:n_train_val], "split"] = "val"
     return df
 
 
@@ -100,7 +109,7 @@ def model_features(dropped):
 
 
 def save_split(sets, features, meta, out_dir):
-    """Écrit train/val/test en Parquet et la liste des caractéristiques dans features.json."""
+    """Écrit chaque ensemble en Parquet et la liste des caractéristiques dans features.json."""
     out_dir.mkdir(parents=True, exist_ok=True)
     for name in sets:
         sets[name].to_parquet(out_dir / f"{name}.parquet", index=False)

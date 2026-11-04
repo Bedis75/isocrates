@@ -1,6 +1,6 @@
 """Modèles supervisés (attaques connues) : Random Forest multi-classe et MLP.
 
-- Les réglages sont choisis sur val (macro-F1), jamais sur test (règle 7).
+- Les réglages sont choisis sur val (macro-F1), jamais sur test_connu ni test_inconnu (règle 7).
 - Le MLP a besoin de données mises à l'échelle : log signé puis StandardScaler, ajustés sur train.
 - Déséquilibre des classes : chaque flux reçoit un poids (voir sqrt_balanced_weights).
 """
@@ -22,7 +22,7 @@ PROCESSED = ROOT / "data" / "processed"
 MODELS = ROOT / "models"
 
 
-def load_sets(names=("train", "val", "test")):
+def load_sets(names=("train", "val", "test_connu", "test_inconnu")):
     """Charge les fichiers Parquet du notebook 02 et la liste des caractéristiques."""
     with open(PROCESSED / "features.json", encoding="utf-8") as f:
         features = json.load(f)["features"]
@@ -56,6 +56,16 @@ def sqrt_balanced_weights(y):
 def macro_f1(y_true, y_pred):
     """Moyenne des F1 de chaque classe : une petite classe compte autant qu'une grande."""
     return f1_score(y_true, y_pred, average="macro", zero_division=0)
+
+
+def macro_f1_without(y_true, y_pred, labels, excluded):
+    """Macro-F1 calculé sans la classe `excluded`.
+    Utile pour heartbleed : avec 2 flux seulement, son F1 saute d'un coup à la moindre erreur."""
+    kept = []
+    for label in labels:
+        if label != excluded:
+            kept.append(label)
+    return f1_score(y_true, y_pred, labels=kept, average="macro", zero_division=0)
 
 
 def fit_rf(X, y, max_depth=None, class_weight=None):

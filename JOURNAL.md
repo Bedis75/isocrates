@@ -429,13 +429,101 @@ Autres limites :
 
 ---
 
+## Étape 7 · 4 novembre 2026 · PyTorch et notebook 04 : autoencodeur vs Isolation Forest
+
+### 7.1 Notions utiles
+
+- **Détecteur d'anomalies :** un modèle qui apprend seulement le trafic normal, puis signale ce qui n'y ressemble pas. Il n'a besoin d'aucun exemple d'attaque, c'est pourquoi il peut repérer des attaques jamais vues. En revanche, il ne donne pas leur nom.
+- **Autoencodeur :** un réseau de neurones qui apprend à recopier son entrée en la faisant passer par un **goulot**, une couche étroite. Ici : 78 → 64 → 8 → 64 → 78. Il doit donc résumer le trafic normal. Un flux inhabituel est mal recopié, et son **erreur de reconstruction** sert de score d'anomalie.
+- **Isolation Forest :** une forêt qui isole chaque flux par des coupures au hasard. Un flux anormal s'isole en peu de coupures, et reçoit donc un score élevé.
+- **Seuil :** le score au-dessus duquel on lance une alerte. Ici, le 99e percentile du score sur le benign de val : par construction, 1 % de ce benign déclenche une alerte.
+- **AUC :** mesure si les scores d'une attaque sont plus élevés que ceux du benign, sans dépendre du seuil. 1 = séparation parfaite, 0,5 = hasard.
+- **Rappel moyen :** la moyenne des parts détectées de chaque classe d'attaque, chacune comptant autant.
+- **Dans la boucle d'entraînement PyTorch (`fit_autoencoder`) :** pour chaque lot de flux, le réseau les recopie, on mesure l'erreur (`loss`), la rétropropagation calcule comment corriger chaque poids (`backward`), puis l'optimiseur Adam les met à jour (`step`).
+
+### 7.2 Décision de Bedis et installation
+
+Bedis a choisi PyTorch plutôt que sklearn, pour la valeur de cette compétence sur son CV. PyTorch 2.15.0 (version CPU) est installé dans l'environnement `isocrates`. Le test de bon fonctionnement passe, et le RF enregistré se recharge sans problème.
+
+### 7.3 Fichiers
+
+- **Créé :** `src/isocrates/ml/anomaly.py`. On y trouve la classe `Autoencoder`, `fit_autoencoder`, `reconstruction_error`, `fit_isolation_forest`, `isolation_score`, `threshold_from_benign`, `detection_table` et `mean_attack_recall`.
+- **Créé :** `notebooks/04_anomalies_ae_if.ipynb`, exécuté de bout en bout.
+- **Figures :** `reports/04_ae_courbes.png`, `04_detection_test_inconnu.png`, `04_scores_par_classe.png`.
+- **Modèles :** `models/autoencoder.pt`, `autoencoder_meta.joblib`, `isolation_forest.joblib`, `anomaly_choice.joblib` (non versionnés dans Git).
+- **Modifié :** `CLAUDE.md`. PyTorch y est marqué comme installé, et l'avancement est à jour. La phrase « le meilleur sur val/test est gardé » devient « le meilleur sur val », car elle contredisait la règle 7.
+
+### 7.4 Protocole (fixé avant tout calcul)
+
+1. Entraînement sur le **benign de train uniquement** : 699 151 flux.
+2. Log signé et standardisation ajustés sur ces mêmes flux, pour l'autoencodeur.
+3. Autoencodeur : goulot de 8, 16 ou 32, avec 20 époques, en gardant l'époque à la plus faible erreur sur le benign de val.
+4. Isolation Forest : `max_samples` de 256 ou 4096.
+5. Seuil de chaque modèle fixé sur le benign de val.
+6. Choix des réglages et du modèle retenu **sur val**, par le rappel moyen sans heartbleed.
+7. test_connu et test_inconnu servent seulement à mesurer.
+
+Val ne contient que des attaques connues : rien ne garantissait donc que le modèle choisi soit aussi le meilleur sur les attaques inconnues.
+
+### 7.5 Résultats obtenus
+
+**Choix sur val :** autoencodeur, goulot 8.
+
+| Goulot | Erreur val | Rappel moyen val |
+|---|---|---|
+| 8 (retenu) | 0,0206 | **0,874** |
+| 16 | 0,0071 | 0,677 |
+| 32 | 0,0020 | 0,836 |
+
+Isolation Forest : 0,038 avec `max_samples` = 256, **0,255** avec 4096 (retenue).
+
+**Rappel moyen :**
+
+| | Val | test_connu | test_inconnu |
+|---|---|---|---|
+| Autoencodeur | 0,874 | 0,950 | 0,469 |
+| Isolation Forest | 0,255 | 0,268 | 0,090 |
+
+**test_inconnu, par classe :**
+
+| Classe | Flux | Autoencodeur | AUC | Isolation Forest | AUC | RF (notebook 03) | MLP (notebook 03) |
+|---|---|---|---|---|---|---|---|
+| portscan | 160 106 | **100,0 %** | 0,999 | 0,5 % | 0,972 | 0,03 % | 0,002 % |
+| ddos | 95 683 | **100 %** | 0,997 | 39,6 % | 0,981 | 97,7 % | 99,9 % |
+| bot | 735 | **73,5 %** | 0,987 | 6,0 % | 0,649 | 0 % | 0 % |
+| webattack_bruteforce | 1 360 | 5,4 % | 0,946 | 5,2 % | 0,696 | 10,9 % | **94,3 %** |
+| webattack_xss | 661 | 2,7 % | 0,945 | 2,7 % | 0,686 | 11,3 % | **99,7 %** |
+| webattack_sql_injection | 12 | 0 sur 12 | 0,940 | 0 sur 12 | 0,735 | 1 sur 12 | 0 sur 12 |
+| benign (fausses alertes) | 396 886 | 1,53 % | | 1,19 % | | 10 flux | 38 flux |
+
+**test_connu, autoencodeur :** dos_hulk 100 %, ftp_patator 100 %, dos_slowhttptest 99,9 %, ssh_patator 98,0 %, dos_slowloris 87,7 %, dos_goldeneye 84,3 % ; fausses alertes 0,99 %.
+
+### 7.6 Ce qu'il faut retenir
+
+1. **L'autoencodeur fait ce pour quoi il est là, en partie :** il attrape portscan, DDoS et la plupart du bot. La règle 6 du projet (« l'autoencodeur doit les attraper ») n'est donc **que partiellement remplie : il rate les attaques web**.
+2. **Les attaques web passent entre les mailles de RF + autoencodeur.** Leur AUC est élevée (environ 0,94), mais leurs scores restent sous le seuil. Seul le MLP les détecte.
+3. **Bot est fragile :** ses scores sont serrés juste autour du seuil, donc 73,5 % pourrait beaucoup changer avec un seuil un peu différent.
+4. **Fausses alertes plus nombreuses que prévu :** 1,53 % au lieu de 1 % sur test_inconnu, soit 6 065 flux. Le trafic normal des autres jours s'éloigne un peu de celui appris. Le regroupement en incidents devra réduire cette charge.
+5. **La précision de 97,7 % est flatteuse :** portscan et DDoS représentent 39 % des flux de test_inconnu. Avec moins d'attaques, comme dans un vrai réseau, elle serait bien plus basse.
+
+### 7.7 Limites à citer dans le rapport
+
+- **Une seule graine :** le rappel moyen n'évolue pas régulièrement avec le goulot (0,874, 0,677, 0,836). On ne sépare donc pas l'effet du goulot du hasard de l'entraînement.
+- **Pas de plateau :** les 3 réseaux ont leur meilleure erreur à la dernière époque.
+- **Critère de choix limité :** il ne repose que sur des attaques connues, celles de val.
+
+---
+
 ## Questions ouvertes (à trancher par Bedis)
 
-1. **Autoencodeur :** PyTorch (environ 200 Mo à télécharger en version CPU) ou `MLPRegressor` de sklearn (aucun téléchargement) ?
-2. **Critère de choix du MLP :** heartbleed décide du choix de la taille (128, 64), qui serait dernière sans lui. Le changer maintenant serait suspect, puisque test_connu a déjà été vu ; les écarts sont d'ailleurs très faibles (0,9743 à 0,9770). La proposition est de garder ce choix et de le signaler dans le rapport.
-3. **Commit Git à compléter :** le commit ddfc5d3 a été fait pendant que le notebook 03 tournait. Il contient le code, mais pas le notebook exécuté, ses figures, les observations ni ce journal.
-4. Le planning a environ une semaine de retard : la semaine S2 (ML) s'est terminée le 3 novembre et le notebook 04 n'est pas commencé.
+1. **Quel modèle supervisé associer à l'autoencodeur dans le notebook 05 ?** L'association RF + autoencodeur prévue laisse passer la plupart des attaques web, que le MLP détecte. Choisir le MLP à cause de ces chiffres de test serait contraire à la règle 7.
+   - **Option A (proposée) :** garder RF + autoencodeur comme prévu, présenter le RF comme un choix fixé à l'avance pour SHAP, et signaler clairement ce trou dans le rapport.
+   - **Option B :** tester le MLP à la place ou en plus, en annonçant dans le rapport que cette idée vient d'une mesure sur test_inconnu, ce qui rend les chiffres sur ce test moins indépendants.
+2. **Stabilité de l'autoencodeur :** faut-il relancer sur quelques graines pour savoir si les chiffres, surtout ceux de bot, tiennent ? Environ 1 minute par entraînement.
+3. **Critère de choix du MLP** (voir étape 6) : garder le choix actuel et le signaler dans le rapport.
+4. **Commit Git** de cette étape pas encore fait.
+5. Le planning a environ une semaine de retard : la semaine S2 (ML) s'est terminée le 3 novembre.
 
 ## Prochaine étape prévue
 
-`notebooks/04_anomalies_ae_if.ipynb` : détecteurs d'anomalies (autoencodeur contre Isolation Forest), entraînés sur le **benign** de train uniquement, avec un seuil au 99e percentile du score sur le benign de val. Objectif : attraper portscan, bot et les attaques web sur test_inconnu.
+`notebooks/05_fusion_incidents.ipynb` : fusion du modèle supervisé et du détecteur (attaque connue → étiquette ; détecteur seul → « inconnu »), puis regroupement des flux suspects par IP source et fenêtre de temps en incidents JSON, avec les explications SHAP.

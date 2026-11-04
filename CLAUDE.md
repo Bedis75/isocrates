@@ -28,7 +28,7 @@ Flux réseau (LYCOS-IDS2017)
   │     Random Forest multi-classe   ⟷ comparé à un MLP
   ├─ Non supervisé (attaques INCONNUES)
   │     Autoencodeur (PyTorch, erreur de reconstruction)   ⟷ comparé à l'Isolation Forest
-  │     Les deux sont entraînés et évalués ; le meilleur sur val/test est gardé dans le pipeline final
+  │     Les deux sont entraînés et évalués ; le meilleur sur val est gardé dans le pipeline final (tests : mesure seulement, règle 7)
   ├─ Fusion : supervisé « attaque » → label ; détecteur d'anomalies seul → label « inconnu »
   ├─ SHAP (TreeExplainer) → pourquoi cette alerte
   └─ Regroupement : flux suspects (même IP source + fenêtre de temps) → incident JSON
@@ -129,9 +129,9 @@ Notebooks prévus :
 
 - Windows + **WSL2 Ubuntu-24.04**, projet dans `~/dev/isocrates`
 - Conda, environnement **`isocrates`**, Python 3.11
-- Installé : pandas, pyarrow, numpy, scikit-learn, shap, matplotlib, seaborn, jupyter, tqdm, python-dotenv (torch à installer)
+- Installé : pandas, pyarrow, numpy, scikit-learn, shap, matplotlib, seaborn, jupyter, tqdm, python-dotenv, torch 2.15 (version CPU)
 - RAM : 9,7 Go (+ 8 Go de swap) → charger un jour à la fois si besoin, `float32` pour les caractéristiques (jamais pour `timestamp`)
-- Connexion 4G limitée : prévenir avant tout gros téléchargement (torch GPU environ 2,5 Go)
+- Connexion 4G limitée : prévenir avant tout gros téléchargement
 - `.gitignore` exclut `data/`, `*.csv`, `*.parquet`, modèles, `.env`
 
 ## 8. Planning
@@ -169,9 +169,11 @@ Fait :
 - [x] Commit « Étape 03 » (6e248de)
 - [x] Découpage 70/15/15 avec test_connu : `prepare.py`, notebooks 02 et 03 relancés. RF retenu : profondeur 20 (macro-F1 val 0,9757 ; test_connu sans heartbleed 0,9574). MLP 128-64 époque 9 (0,9775 ; 0,9334)
 - [x] Commit « Étape 03 bis » (ddfc5d3) : code seulement, fait pendant que le notebook 03 tournait
-- [ ] Commit des résultats du test connu (notebook 03 exécuté, figures, observations, journal)
-- [ ] Décider : autoencodeur en PyTorch (à installer, ~200 Mo CPU) ou avec `MLPRegressor` de sklearn
-- [ ] Notebook `04_anomalies_ae_if.ipynb`
+- [x] Commit des résultats du test connu (7b63919)
+- [x] PyTorch CPU installé ; `src/isocrates/ml/anomaly.py` + notebook `04_anomalies_ae_if.ipynb` : autoencodeur retenu (goulot 8, rappel moyen val 0,874) vs Isolation Forest (0,255). Sur test_inconnu : portscan et DDoS 100 %, bot 73,5 %, attaques web moins de 6 %, fausses alertes 1,53 %
+- [ ] Commit « Étape 04 »
+- [ ] **Décision ouverte** : RF + autoencodeur laisse passer les attaques web, que seul le MLP détecte (voir JOURNAL, étape 7)
+- [ ] Notebook `05_fusion_incidents.ipynb`
 
 ## 10. Références clés
 

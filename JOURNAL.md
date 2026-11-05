@@ -514,15 +514,131 @@ Isolation Forest : 0,038 avec `max_samples` = 256, **0,255** avec 4096 (retenue)
 
 ---
 
+## Étape 8 · 4 novembre 2026 · Vérification : le MLP triche-t-il ?
+
+### 8.1 Question de Bedis
+
+Sur test_inconnu, le MLP détectait 94 % des webattack_bruteforce et 99,7 % des webattack_xss. Bedis a trouvé ces chiffres suspects, puisqu'il cite une fourchette de 1 à 19 % pour un supervisé face à des attaques web jamais vues (Xu et Liu 2025, arXiv 2506.19877 ; **référence fournie par Bedis, non vérifiée ici, à contrôler avant de la citer**).
+
+**Hypothèse testée :** un **raccourci** (*shortcut learning*), c'est-à-dire que le modèle apprend un détail facile au lieu de la vraie notion. Ici, il reconnaîtrait la machine de l'attaquant (pile TCP, rythme des outils) plutôt que le comportement d'attaque. Les attaques web et ssh/ftp_patator viennent en effet de la même machine, `172.16.0.1`.
+
+### 8.2 Notions utiles
+
+- **Importance par permutation :** on mélange une colonne et on regarde combien la détection baisse. Si elle baisse beaucoup, la colonne est décisive.
+- **SHAP KernelExplainer :** version de SHAP qui marche pour tout modèle. Elle estime ce que chaque colonne apporte à la probabilité « attaque » d'un flux.
+- **Graine :** le nombre qui fixe le hasard de l'entraînement. Changer de graine et comparer montre ce qui tient et ce qui vient du hasard.
+- **Moyenne ± écart-type :** l'écart-type mesure la dispersion entre graines. Grand écart-type = résultat instable.
+
+### 8.3 Fichiers
+
+- **Créés :** `src/isocrates/ml/verification.py` et `notebooks/04b_verification_mlp.ipynb`.
+- **Figures :** `reports/04b_colonnes_decisives.png`, `04b_mlp_sans_colonnes.png`, `04b_stabilite_autoencodeur.png`, `04b_mlp_par_epoque.png`.
+- **Non versionné :** `models/04b_resultats.joblib` garde les résultats de chaque entraînement.
+- **Modifiés :** `CLAUDE.md`, et une note de renvoi dans les observations des notebooks 03 et 04.
+
+Aucun modèle du pipeline n'a changé. test_connu n'a pas été utilisé. test_inconnu a servi à mesurer, pas à choisir.
+
+### 8.4 Méthode
+
+**Prévu avant les calculs :**
+- test direct sur le trafic normal de `172.16.0.1` (ajouté par Claude, non demandé par Bedis) ;
+- colonnes décisives sur les flux web détectés ;
+- MLP réentraîné (128, 64) sans colonnes TCP, sans rythme, sans les deux, et sans le top 15, avec 5 graines chacun ;
+- stabilité de l'autoencodeur : goulots 8, 16 et 32, avec 5 graines chacun ;
+- règle de lecture : chute si la détection moyenne passe sous 50 % **et** baisse de plus de 2 écarts-types.
+
+**Ajouté après avoir vu les premiers résultats, donc à présenter comme tel :**
+- MLP sans les 4 colonnes de fenêtre ;
+- étude du trafic normal au profil « 1 machine, 1 port » ;
+- suivi de la détection époque par époque.
+
+LYCOS n'a ni colonne TTL ni options TCP. Seule la longueur d'en-tête en donne un indice indirect.
+
+### 8.5 Résultats
+
+**Colonnes décisives sur les flux web (part de l'importance SHAP) :** fenêtres de 60 s **63 %**, connexion TCP 14 %, taille et volume 14 %, destination 6 %, rythme 3 %. Les trois premières colonnes sont `w_dst_ports` (0,32), `w_dst_hosts` (0,30) et `fwd_pkt_hdr_len_min` (0,09, de type TCP). Le MLP range les attaques web surtout sous `dos_slowloris` (88 à 93 %).
+
+**Retrait de colonnes, moyenne ± écart-type sur 5 graines :**
+
+| Variante | Colonnes | bruteforce | xss | portscan |
+|---|---|---|---|---|
+| MLP complet | 78 | 75,3 % ± 37,8 | 79,2 % ± 42,7 | 0,0 % |
+| Sans connexion TCP | 63 | 94,5 % ± 2,9 | 98,4 % ± 2,3 | 0,0 % |
+| Sans rythme | 56 | 77,2 % ± 40,3 | 79,9 % ± 43,0 | 0,0 % |
+| Sans TCP ni rythme | 41 | 81,0 % ± 29,6 | 82,0 % ± 39,0 | 0,0 % |
+| Sans top 15 (diagnostic) | 63 | 0,0 % ± 0,0 | 1,1 % ± 1,5 | 99,8 % ± 0,1 |
+| **Sans fenêtres 60 s (ajouté)** | 74 | **0,1 %** | **2,3 %** | 0,5 % |
+
+**Le profil « 1 machine et 1 port par minute » :**
+
+| Ensemble | Flux avec ce profil |
+|---|---|
+| Attaques de train | **128 283 sur 128 283 (100 %)** |
+| Benign de train | 61 782 sur 699 151 (8,8 %) |
+| Attaques web de test_inconnu | 2 033 sur 2 033 (100 %) |
+| Benign de test_inconnu | 32 620 sur 396 886, dont **28 alertes (0,09 %)** |
+
+**Trafic normal de la machine de l'attaquant :** le MLP signale 28 flux sur 415 (6,7 %), contre 10 sur 396 471 pour les autres machines. Le RF : 10 sur 415 (2,4 %), contre 0.
+
+**Détection selon la règle d'arrêt du MLP complet :**
+
+| Graine | Protocole (macro-F1 avec heartbleed) | Sans heartbleed | Époque 20 |
+|---|---|---|---|
+| 0 | époque 9 : 94,3 % / 99,7 % | époque 6 : 93,2 % / 98,2 % | 94,3 % / 99,7 % |
+| 1 | époque 6 : 89,6 % / 99,4 % | époque 6 : 89,6 % / 99,4 % | 99,9 % / 99,8 % |
+| 2 | **époque 1 : 7,9 % / 3,0 %** | époque 13 : 89,0 % / 99,4 % | 88,9 % / 99,7 % |
+| 3 | époque 7 : 94,2 % / 99,4 % | époque 7 : 94,2 % / 99,4 % | 93,8 % / 99,7 % |
+| 4 | époque 4 : 90,5 % / 94,7 % | époque 4 : 90,5 % / 94,7 % | 94,0 % / 99,4 % |
+
+(chaque case : bruteforce / xss)
+
+**Autoencodeur, 5 graines :**
+
+| Goulot | Rappel moyen val | bot | bruteforce | xss | ddos | portscan | Fausses alertes |
+|---|---|---|---|---|---|---|---|
+| 8 (retenu) | 0,869 ± 0,072 | **48,0 % ± 33,6** | 5,2 % ± 0,3 | 2,7 % ± 0,0 | 100 % | 100 % | 1,4 % ± 0,1 |
+| 16 | 0,720 ± 0,145 | 6,3 % ± 0,5 | 0,0 % | 2,2 % ± 1,2 | 100 % | 100 % | 1,3 % |
+| 32 | 0,579 ± 0,156 | 6,0 % | 1,0 % ± 2,2 | 2,6 % ± 0,2 | 98,7 % ± 2,9 | 100 % | 1,2 % |
+
+### 8.6 Conclusions, sans arrondir les angles
+
+1. **La forme précise de l'hypothèse (pile TCP, rythme) n'est pas soutenue.** Retirer ces colonnes ne fait pas chuter la détection.
+2. **Il y a pourtant une dépendance forte à une propriété du scénario.** La détection des attaques web repose sur les fenêtres : sans elles, elle tombe à 0,1 % et 2,3 % sur les 5 graines. Or **toutes** les attaques de train ont le profil « 1 machine, 1 port par minute », car elles ont été jouées ainsi dans le banc d'essai. Le MLP apprend donc en partie la façon dont les attaques ont été jouées. **Le 94 à 99,7 % ne doit pas être présenté comme une capacité générale à détecter les attaques web.**
+3. **Ce n'est pas une règle simple pour autant.** 99,9 % du benign au même profil n'est pas signalé : le MLP combine ce profil avec d'autres colonnes.
+4. **Ce n'est pas non plus une preuve que le MLP reconnaît la machine.** Viser une seule cible peut être un vrai comportement d'attaque. Le taux d'alerte plus fort sur le benign de `172.16.0.1` (6,7 %) va dans ce sens, mais ces flux partagent leurs fenêtres avec les attaques de la même minute. LYCOS ne permet pas de trancher, car toutes les attaques web viennent d'une seule source.
+5. **L'instabilité venait surtout de l'arrêt à l'époque 1.** Dès que le réseau a dépassé les premières époques, la détection des attaques web est stable : bruteforce 91,3 % ± 2,3, XSS 98,2 % ± 2,0 avec un arrêt sans heartbleed. Le choix de l'époque à l'époque 1 pour la graine 2 vient de heartbleed (2 flux).
+6. **Le 73,5 % de bot de l'autoencodeur n'est pas fiable :** 48,0 % ± 33,6, de 21,6 % à 94,3 %. Les autres chiffres sont stables : portscan et DDoS à environ 100 %, attaques web très basses.
+
+### 8.7 Corrections de ce que Claude avait dit
+
+- **« Le 94 à 99,7 % dépend du hasard de l'initialisation » :** en grande partie faux. Cet échec vient surtout de l'arrêt à l'époque 1, lié à heartbleed.
+- **« La val ne permet pas de voir la différence » :** à nuancer. Le macro-F1 sans heartbleed choisit un bon modèle pour les 5 graines, mais cela n'a été constaté qu'en regardant test_inconnu.
+- **La règle de chute fixée à l'avance a mal fonctionné.** L'écart-type du MLP complet (0,38) met le seuil de 2 écarts-types sous zéro : elle répond « pas de chute » même quand la détection passe de 75 % à 0 %. Elle reste telle quelle dans le notebook, et la lecture graine par graine la remplace, en le disant.
+- **« Sans connexion TCP » semblait améliorer la détection (95 % ± 3) :** c'est un effet de la règle d'arrêt, aucune de ses graines ne s'arrêtant à l'époque 1. Ce n'est pas un gain réel lié au retrait des colonnes.
+- **Le saut du portscan à 99,8 % sans le top 15 ne vient pas des fenêtres** (0,5 % sans elles seules). Sa cause n'est pas identifiée.
+
+### 8.8 Phrases proposées pour le rapport
+
+> Le MLP détecte 91 à 98 % des attaques web inconnues après l'époque 1, mais cette détection disparaît sans les caractéristiques de fenêtre (0,1 à 2,3 %). Comme toutes les attaques d'entraînement ciblent une seule machine et un seul port par minute, ce résultat dépend du scénario du banc d'essai et ne peut pas être généralisé à d'autres réseaux.
+
+> La détection du bot par l'autoencodeur varie fortement selon la graine (48 % ± 34, de 22 % à 94 % sur 5 graines).
+
+### 8.9 Limites
+
+- Les tests ajoutés après coup et le top 15 dépendent de test_inconnu : ce sont des diagnostics.
+- 5 graines donnent un ordre de grandeur de la dispersion, pas une mesure précise.
+- Le MLP n'a été testé sur 5 graines qu'avec la taille (128, 64).
+- Le RF et l'autoencodeur utilisent aussi les fenêtres, mais leur dépendance n'a pas été mesurée.
+
+---
+
 ## Questions ouvertes (à trancher par Bedis)
 
-1. **Quel modèle supervisé associer à l'autoencodeur dans le notebook 05 ?** L'association RF + autoencodeur prévue laisse passer la plupart des attaques web, que le MLP détecte. Choisir le MLP à cause de ces chiffres de test serait contraire à la règle 7.
-   - **Option A (proposée) :** garder RF + autoencodeur comme prévu, présenter le RF comme un choix fixé à l'avance pour SHAP, et signaler clairement ce trou dans le rapport.
-   - **Option B :** tester le MLP à la place ou en plus, en annonçant dans le rapport que cette idée vient d'une mesure sur test_inconnu, ce qui rend les chiffres sur ce test moins indépendants.
-2. **Stabilité de l'autoencodeur :** faut-il relancer sur quelques graines pour savoir si les chiffres, surtout ceux de bot, tiennent ? Environ 1 minute par entraînement.
-3. **Critère de choix du MLP** (voir étape 6) : garder le choix actuel et le signaler dans le rapport.
+1. **Quel modèle supervisé pour le notebook 05 ?** Claude recommande de garder **RF + autoencodeur** comme prévu (option A). La détection web du MLP dépend du scénario du banc d'essai, et le choisir à cause de test_inconnu serait contraire à la règle 7. Le trou sur les attaques web est alors à signaler dans le rapport.
+2. **Dépendance du RF et de l'autoencodeur aux fenêtres :** faut-il la mesurer de la même façon ? Claude le recommande, car leurs chiffres de portscan et de DDoS peuvent reposer sur le même type de propriété. Environ 15 minutes.
+3. **Critère de val à l'avenir :** exclure heartbleed du macro-F1 de choix ? Ne s'applique qu'aux prochains modèles : changer le MLP ou le RF déjà mesurés sur test_connu demanderait une nouvelle mesure, et casserait la règle « une seule fois ».
 4. **Commit Git** de cette étape pas encore fait.
-5. Le planning a environ une semaine de retard : la semaine S2 (ML) s'est terminée le 3 novembre.
+5. Le planning a environ une semaine de retard : la semaine S3 (RAG) commence aujourd'hui, 4 novembre.
 
 ## Prochaine étape prévue
 

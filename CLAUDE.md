@@ -68,6 +68,7 @@ Fichiers étiquetés : `data/raw/lycos_labelled/` (5 CSV, 844 Mo, un par jour)
 - 83 colonnes, 0 valeur manquante, 0 infinie, 0 doublon (timestamp lu en float64 ; les 11 doublons vus par `explore.py` venaient du cast float32).
 - `flag_urg`, `fwd_flag_urg`, `bwd_flag_urg` sont constantes (toujours 0) : à retirer.
 - 12 classes d'attaque sur 13 viennent de `172.16.0.1` (seul bot vient de 5 postes `192.168.10.x`) : la fuite par IP est confirmée.
+- 100 % des attaques de train ont le profil « 1 machine et 1 port par minute » (`w_dst_hosts` = `w_dst_ports` = 1), contre 8,8 % du benign de train. La détection web du MLP en dépend (notebook 04b).
 - Pas d'infiltration (retirée par les auteurs).
 - Colonne cible : `label` (valeurs en minuscules, `benign` = normal).
 - Colonnes identifiants (JAMAIS utilisées comme caractéristiques du modèle) :
@@ -120,6 +121,7 @@ Notebooks prévus :
 - `02_preparation.ipynb` : nettoyage, fenêtres, découpage temporel → `data/processed/{train,val,test_connu,test_inconnu}.parquet` + `features.json`
 - `03_supervise_rf_mlp.ipynb` : RF multi-classe vs MLP, mesure finale sur test_connu, détection sur test_inconnu, SHAP
 - `04_anomalies_ae_if.ipynb` : autoencodeur vs Isolation Forest, seuil au 99e percentile de val
+- `04b_verification_mlp.ipynb` : le MLP triche-t-il ? Colonnes décisives, retrait de colonnes, stabilité sur 5 graines
 - `05_fusion_incidents.ipynb` : fusion des scores, regroupement en incidents JSON
 - `06_rag_attack.ipynb` : bases ATT&CK, mitigations, D3FEND dans ChromaDB + BM25
 - `07_agents.ipynb` : graphe LangGraph des 4 agents
@@ -171,8 +173,10 @@ Fait :
 - [x] Commit « Étape 03 bis » (ddfc5d3) : code seulement, fait pendant que le notebook 03 tournait
 - [x] Commit des résultats du test connu (7b63919)
 - [x] PyTorch CPU installé ; `src/isocrates/ml/anomaly.py` + notebook `04_anomalies_ae_if.ipynb` : autoencodeur retenu (goulot 8, rappel moyen val 0,874) vs Isolation Forest (0,255). Sur test_inconnu : portscan et DDoS 100 %, bot 73,5 %, attaques web moins de 6 %, fausses alertes 1,53 %
-- [ ] Commit « Étape 04 »
-- [ ] **Décision ouverte** : RF + autoencodeur laisse passer les attaques web, que seul le MLP détecte (voir JOURNAL, étape 7)
+- [x] Commit « Étape 04 » (41577af)
+- [x] `src/isocrates/ml/verification.py` + notebook `04b_verification_mlp.ipynb` : la détection web du MLP dépend des fenêtres (0,1 à 2,3 % sans elles), pas de la pile TCP ni du rythme ; instabilité surtout due à l'arrêt à l'époque 1 (heartbleed) ; bot de l'autoencodeur 48 % ± 34 sur 5 graines
+- [ ] Commit « Étape 04 bis »
+- [ ] **Décisions ouvertes** (voir JOURNAL, étape 8) : modèle supervisé du notebook 05 (recommandé : RF + autoencodeur) ; mesurer la dépendance du RF et de l'autoencodeur aux fenêtres
 - [ ] Notebook `05_fusion_incidents.ipynb`
 
 ## 10. Références clés

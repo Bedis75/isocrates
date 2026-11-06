@@ -122,7 +122,9 @@ Notebooks prévus :
 - `03_supervise_rf_mlp.ipynb` : RF multi-classe vs MLP, mesure finale sur test_connu, détection sur test_inconnu, SHAP
 - `04_anomalies_ae_if.ipynb` : autoencodeur vs Isolation Forest, seuil au 99e percentile de val
 - `04b_verification_mlp.ipynb` : le MLP triche-t-il ? Colonnes décisives, retrait de colonnes, stabilité sur 5 graines
+- `04c_fenetres_rf_ae.ipynb` : dépendance du RF et de l'autoencodeur aux fenêtres, 5 graines
 - `05_fusion_incidents.ipynb` : fusion des scores, regroupement en incidents JSON
+- `05b_priorisation_incidents.ipynb` : ordre de lecture des incidents et budget, choisis sur val
 - `06_rag_attack.ipynb` : bases ATT&CK, mitigations, D3FEND dans ChromaDB + BM25
 - `07_agents.ipynb` : graphe LangGraph des 4 agents
 - `08_evaluation.ipynb` : 3 configurations (ML seul, LLM seul, ISOCRATES) + comparaisons
@@ -147,7 +149,7 @@ Notebooks prévus :
 | S5 | 18 → 24 nov. | Streamlit + évaluation |
 | S6 | 25 → 30 nov. | Rapport + présentation |
 
-## 9. État actuel (4 novembre 2026)
+## 9. État actuel (5 novembre 2026)
 
 Fait :
 - [x] Dépôt cloné, structure créée (`notebooks/`, `src/isocrates/{ml,rag,agents,app}`, `eval/`, `reports/`, `data/`)
@@ -175,9 +177,13 @@ Fait :
 - [x] PyTorch CPU installé ; `src/isocrates/ml/anomaly.py` + notebook `04_anomalies_ae_if.ipynb` : autoencodeur retenu (goulot 8, rappel moyen val 0,874) vs Isolation Forest (0,255). Sur test_inconnu : portscan et DDoS 100 %, bot 73,5 %, attaques web moins de 6 %, fausses alertes 1,53 %
 - [x] Commit « Étape 04 » (41577af)
 - [x] `src/isocrates/ml/verification.py` + notebook `04b_verification_mlp.ipynb` : la détection web du MLP dépend des fenêtres (0,1 à 2,3 % sans elles), pas de la pile TCP ni du rythme ; instabilité surtout due à l'arrêt à l'époque 1 (heartbleed) ; bot de l'autoencodeur 48 % ± 34 sur 5 graines
-- [ ] Commit « Étape 04 bis »
-- [ ] **Décisions ouvertes** (voir JOURNAL, étape 8) : modèle supervisé du notebook 05 (recommandé : RF + autoencodeur) ; mesurer la dépendance du RF et de l'autoencodeur aux fenêtres
-- [ ] Notebook `05_fusion_incidents.ipynb`
+- [x] Commit « Étape 04 bis » (2bc8bc5)
+- [x] Notebook `04c_fenetres_rf_ae.ipynb` : l'autoencodeur reste à 99 % sur portscan et 91 % sur DDoS sans fenêtres ; le RF chute sur DDoS (97 % à 17 %) ; bot instable dans tous les cas
+- [x] Pipeline validé : RF + autoencodeur. `src/isocrates/ml/fusion.py` + notebook `05_fusion_incidents.ipynb` : `data/processed/incidents/` (incidents sans vraie étiquette, vérité à part). test_inconnu : 262 715 flux en alerte, 487 incidents, dont **474 sans attaque (97,3 %)** ; chaque attaque est présente dans au moins un incident
+- [x] `src/isocrates/ml/priority.py` + notebook `05b_priorisation_incidents.ipynb` : score `rang_combine` et budget de 38,1 % des incidents, choisis sur val. test_inconnu : 185 incidents lus sur 487, les 13 avec attaque y sont, mais 172 lus restent sans attaque (93 %)
+- [ ] Commit « Étape 05 »
+- [ ] **Décision ouverte** (voir JOURNAL, étape 11) : combien d'incidents donner aux agents
+- [ ] Notebook `06_rag_attack.ipynb`
 
 ## 10. Références clés
 

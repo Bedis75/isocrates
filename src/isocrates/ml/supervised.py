@@ -68,10 +68,10 @@ def macro_f1_without(y_true, y_pred, labels, excluded):
     return f1_score(y_true, y_pred, labels=kept, average="macro", zero_division=0)
 
 
-def fit_rf(X, y, max_depth=None, class_weight=None):
+def fit_rf(X, y, max_depth=None, class_weight=None, seed=0):
     """Entraîne un Random Forest de 100 arbres et renvoie (modèle, durée en secondes)."""
     rf = RandomForestClassifier(n_estimators=100, max_depth=max_depth, class_weight=class_weight,
-                                n_jobs=-1, random_state=0)
+                                n_jobs=-1, random_state=seed)
     start = time.perf_counter()
     rf.fit(X, y)
     duration = time.perf_counter() - start

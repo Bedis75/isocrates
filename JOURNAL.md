@@ -632,14 +632,171 @@ LYCOS n'a ni colonne TTL ni options TCP. Seule la longueur d'en-tête en donne u
 
 ---
 
+## Étape 9 · 5 novembre 2026 · Le RF et l'autoencodeur dépendent-ils des fenêtres ?
+
+**Pourquoi :** l'étape 8 a montré que la détection web du MLP dépend des 4 colonnes de fenêtre. Bedis a validé la même vérification pour les deux modèles retenus.
+
+**Méthode :** RF (profondeur 20) et autoencodeur (goulot 8), avec et sans les 4 colonnes, sur 5 graines. Le seuil vient du benign de val, et test_inconnu sert seulement à mesurer. Aucun modèle du pipeline ne change.
+
+**Fichiers :** `notebooks/04c_fenetres_rf_ae.ipynb`, `reports/04c_fenetres_rf_ae.png`, `models/04c_resultats.joblib` (non versionné). `fit_rf` accepte maintenant une graine (`supervised.py`).
+
+**Résultats, part détectée sur test_inconnu, moyenne [min ; max] sur 5 graines :**
+
+| Modèle | Classe | Avec fenêtres | Sans fenêtres |
+|---|---|---|---|
+| RF | ddos | 97,3 % [96,0 ; 98,8] | 16,7 % [2,2 ; 43,5] |
+| RF | webattack_bruteforce | 10,7 % [10,1 ; 11,0] | 1,3 % [0,5 ; 1,8] |
+| RF | webattack_xss | 11,2 % [10,7 ; 11,3] | 0,3 % [0,0 ; 0,5] |
+| Autoencodeur | portscan | 100 % [99,9 ; 100] | 99,0 % [96,0 ; 100] |
+| Autoencodeur | ddos | 100 % | 91,2 % [61,9 ; 100] |
+| Autoencodeur | bot | 49,3 % [21,6 ; 94,3] | 25,8 % [6,1 ; 99,9] |
+
+**Ce qu'il faut retenir :**
+1. **Les principales détections de l'autoencodeur tiennent sans les fenêtres :** le portscan presque entièrement, la DDoS sauf pour une graine. Elles ne reposent donc pas surtout sur le profil trouvé à l'étape 8.
+2. **Le nom « dos_hulk » que le RF donne à la DDoS dépend fortement des fenêtres.**
+3. **Bot est fragile dans tous les cas.** Même en relançant la même graine 0, on passe de 73,5 % à 80,0 %, pour un rappel sur val presque identique (0,8739 et 0,8737). Le modèle enregistré redonne bien 73,5 %. Sa moyenne de 49,3 % diffère légèrement du 48,0 % de l'étape 8 pour cette raison.
+4. **Limite :** ces tests ne disent pas ce que feraient les modèles sur un autre réseau.
+
+---
+
+## Étape 10 · 5 novembre 2026 · Notebook 05 : fusion et incidents
+
+### 10.1 Notions utiles
+
+- **Fusion :** on combine les deux modèles pour chaque flux. Si le RF signale une attaque, on garde son nom ; sinon, si le score de l'autoencodeur dépasse le seuil, le flux est marqué « inconnu » ; sinon, pas d'alerte.
+- **Incident :** un groupe d'alertes de la même IP source, séparées par moins de 5 minutes. C'est ce que lira l'analyste, et ce que recevront les agents LLM.
+- **Incident sans attaque :** un incident dont tous les flux sont en réalité normaux, donc une fausse alerte pour l'analyste.
+- **Incident mixte :** un incident qui contient à la fois des flux d'attaque et des flux normaux.
+
+### 10.2 Décision et fichiers
+
+Bedis a validé **RF + autoencodeur**. Le MLP reste un résultat de comparaison.
+
+- **Créés :** `src/isocrates/ml/fusion.py` et `notebooks/05_fusion_incidents.ipynb`.
+- **Figures :** `reports/05_fusion_par_classe.png`, `05_incidents_par_machine.png`. Exemple versionné : `reports/05_exemple_incident.json`.
+- **Données (non versionnées) :** `data/processed/incidents/test_connu.json`, `test_inconnu.json`, et à part, `verite_test_connu.json`, `verite_test_inconnu.json`.
+
+Aucun réentraînement ni réglage. **La vraie étiquette n'entre jamais dans un incident :** elle est rangée à part pour l'évaluation, et le code le contrôle.
+
+Chaque incident contient : l'IP source, les heures, le nombre de flux, les étiquettes et les sources, les machines et ports contactés, les scores, les fenêtres maximales et deux explications (SHAP pour le RF, colonnes les plus mal reconstruites pour l'autoencodeur).
+
+### 10.3 Résultats par flux
+
+**test_inconnu :**
+
+| Classe | Flux | Nom d'une attaque connue | « inconnu » | Sans alerte | Part en alerte | RF seul | Autoencodeur seul |
+|---|---|---|---|---|---|---|---|
+| portscan | 160 106 | 55 | 160 047 | 4 | 100,0 % | 0,03 % | 100,0 % |
+| ddos | 95 683 | 93 507 | 2 176 | 0 | 100 % | 97,7 % | 100 % |
+| bot | 735 | 0 | 540 | 195 | 73,5 % | 0 % | 73,5 % |
+| webattack_bruteforce | 1 360 | 148 | 73 | 1 139 | 16,3 % | 10,9 % | 5,4 % |
+| webattack_xss | 661 | 75 | 18 | 568 | 14,1 % | 11,3 % | 2,7 % |
+| webattack_sql_injection | 12 | 1 | 0 | 11 | 8,3 % | 8,3 % | 0 % |
+| benign | 396 886 | 10 | 6 065 | 390 811 | **1,53 %** | | |
+
+Pour bot, retenir 49 % en moyenne sur 5 graines plutôt que 73,5 %.
+
+**test_connu :** part en alerte de 97,97 à 100 % sur toutes les classes ; fausses alertes 0,99 %. Bon nom : dos_hulk 23 710 sur 23 849, dos_goldeneye 1 009 sur 1 015, dos_slowhttptest 727 sur 730, dos_slowloris **647 sur 852**, ftp_patator 601 sur 601, ssh_patator 420 sur 444, heartbleed 1 sur 2.
+
+### 10.4 Résultats par incident
+
+| | test_connu | test_inconnu |
+|---|---|---|
+| Flux en alerte | 28 960 | 262 715 |
+| Incidents | 239 | **487** |
+| Incidents avec attaque | 7 | 13 |
+| dont avec aussi du benign | 0 | 12 |
+| Incidents sans attaque | 232 | **474** |
+| Part sans attaque | 97,1 % | **97,3 %** |
+
+Sur test_inconnu, chaque attaque est présente dans au moins un incident : portscan 5, bot 5 (une par machine source), DDoS 1, bruteforce 1, XSS et sql_injection réunies dans 1.
+
+Sensibilité de l'écart, sur val : 552 incidents à 1 minute, 197 à 5 minutes, 80 à 15 minutes.
+
+### 10.5 Ce qu'il faut retenir
+
+1. **Bonne nouvelle : le volume baisse fortement,** de 262 715 flux à 487 incidents.
+2. **Mauvaise nouvelle : 97 % des incidents sont de fausses alertes.** La précision de 97,7 % par flux était trompeuse (voir l'étape 7) : elle vient de quelques très gros incidents d'attaque. **C'est exactement le problème de surcharge d'alertes que le projet veut réduire, et il n'est pas encore réglé par le ML seul.**
+3. **Ces fausses alertes ne viennent pas d'une seule machine.** Elles sont réparties sur 32 machines, à 45 incidents au plus. Elles sont petites : environ 11 flux chacune, 179 s en médiane. Une priorisation par taille ou par score semble possible, mais elle devra être réglée sur val.
+4. **Nuance sur les attaques web :** seuls 14 à 16 % de leurs flux sont signalés, mais chacune se retrouve dans un incident. Ce résultat corrige en partie la phrase « RF + autoencodeur laisse passer les attaques web » de l'étape 7 : c'est vrai flux par flux, moins au niveau des incidents. Mais ces incidents restent noyés parmi les 474 sans attaque.
+5. **L'étiquette du RF peut tromper.** 97,7 % des flux de DDoS sont appelés dos_hulk. Le champ `etiquette_expliquee` peut aussi donner un nom très minoritaire : 8 flux sur 139 586 dans l'exemple enregistré.
+
+### 10.6 Limites à citer dans le rapport
+
+- L'écart de 5 minutes est fixé à l'avance, sans justification forte, et le nombre d'incidents en dépend beaucoup.
+- Les explications portent sur un seul flux par incident.
+- Les chiffres de bot sont instables.
+- Les détections du notebook 05 viennent d'un seul entraînement de chaque modèle.
+
+---
+
+## Étape 11 · 5 novembre 2026 · Notebook 05b : priorisation des incidents
+
+### 11.1 Notions utiles
+
+- **Priorisation :** classer les incidents du plus urgent au moins urgent, pour que l'analyste commence par les plus probables.
+- **Rang combiné :** on classe les incidents par nombre de flux, puis par score d'anomalie maximal, et on fait la moyenne des deux rangs. Un incident remonte s'il est gros, très anormal, ou un peu des deux.
+- **Budget de lecture :** la part des incidents que l'on lit en premier.
+- **Ordre d'arrivée :** la référence, c'est-à-dire ce que ferait un analyste sans priorisation.
+
+### 11.2 Décision et fichiers
+
+Bedis a choisi d'ajouter la priorisation.
+
+- **Créés :** `src/isocrates/ml/priority.py` et `notebooks/05b_priorisation_incidents.ipynb`.
+- **Figure :** `reports/05b_classes_vues.png`.
+- **Non versionnés :** `data/processed/incidents/test_connu_priorise.json`, `test_inconnu_priorise.json`, `models/priority_choice.joblib`. Les fichiers du notebook 05 ne changent pas.
+
+**Règles fixées avant de mesurer sur les tests :** quatre candidats sans vraie étiquette ni IP source, aucun score basé sur le RF (val ne contient que des attaques qu'il connaît), choix sur val, égalités comptées au rang le plus défavorable. Seuls le score retenu et l'ordre d'arrivée sont mesurés sur les tests.
+
+### 11.3 Choix sur val (197 incidents, dont 7 avec attaque)
+
+| Score | Incidents à lire pour voir toutes les attaques | Rang moyen de première vue | Sans heartbleed : à lire |
+|---|---|---:|---:|
+| ordre d'arrivée | 193 | 133,4 | non calculé |
+| `nb_flux` | 142 | 23,3 | 6 |
+| `score_max` | 138 | 53,7 | 138 |
+| `score_moyen` | 180 | 75,1 | 180 |
+| **`rang_combine` (retenu)** | **75** | 30,4 | 59 |
+
+Budget : 75 / 197 = **38,1 % des incidents**.
+
+### 11.4 Mesure unique sur les tests
+
+| | test_connu : score | test_connu : arrivée | test_inconnu : score | test_inconnu : arrivée |
+|---|---:|---:|---:|---:|
+| Incidents en tout | 239 | 239 | 487 | 487 |
+| Lus avec le budget | 90 | 91 | **185** | 186 |
+| Avec attaque lus | **7 sur 7** | 2 sur 7 | **13 sur 13** | 3 sur 13 |
+| Sans attaque lus | 83 | 89 | **172** | 183 |
+| Classes vues dans le budget | 7 sur 7 | 2 sur 7 | 6 sur 6 | 4 sur 6 |
+| À lire pour tout voir | 85 | 142 | 121 | 442 |
+
+Rang du premier incident par attaque sur test_inconnu : portscan 2, bot 4, DDoS 17, XSS et sql_injection 50, bruteforce 121.
+
+### 11.5 Ce qu'il faut retenir
+
+1. **La priorisation fonctionne nettement mieux que l'ordre d'arrivée.** Avec le même budget, on lit les 13 incidents avec attaque de test_inconnu, contre 3.
+2. **Elle ne règle pas la surcharge.** On lit 62 % d'incidents en moins (185 au lieu de 487), mais 172 des 185 lus sont sans attaque, soit **93 % de fausses alertes** (97,3 % avant). Les agents devront donc encore écarter beaucoup d'incidents.
+3. **Le choix est fragile.** Il repose sur 7 incidents avec attaque, et heartbleed (2 flux) le décide. Sans lui, `nb_flux` suffirait avec 6 incidents, contre 59. On garde quand même le critère annoncé, car il protège les petites attaques.
+4. **Les attaques web arrivent tard** (rangs 50 et 121). Un budget très court les perdrait.
+
+### 11.6 Limites à citer dans le rapport
+
+- L'idée de regarder la taille des incidents vient d'une observation faite sur test_inconnu (notebook 05). Le score et le budget sont choisis sur val, mais l'idée n'est pas totalement indépendante des tests.
+- Le classement se calcule après coup, sur tous les incidents d'un ensemble. Il n'est pas utilisable tel quel en temps réel.
+- Les détections viennent d'un seul entraînement, alors que bot est instable.
+- Val ne contient que des attaques connues.
+- Les autres scores n'ont volontairement pas été mesurés sur les tests : on ne sait donc pas si `nb_flux` y aurait fait mieux.
+
+---
+
 ## Questions ouvertes (à trancher par Bedis)
 
-1. **Quel modèle supervisé pour le notebook 05 ?** Claude recommande de garder **RF + autoencodeur** comme prévu (option A). La détection web du MLP dépend du scénario du banc d'essai, et le choisir à cause de test_inconnu serait contraire à la règle 7. Le trou sur les attaques web est alors à signaler dans le rapport.
-2. **Dépendance du RF et de l'autoencodeur aux fenêtres :** faut-il la mesurer de la même façon ? Claude le recommande, car leurs chiffres de portscan et de DDoS peuvent reposer sur le même type de propriété. Environ 15 minutes.
-3. **Critère de val à l'avenir :** exclure heartbleed du macro-F1 de choix ? Ne s'applique qu'aux prochains modèles : changer le MLP ou le RF déjà mesurés sur test_connu demanderait une nouvelle mesure, et casserait la règle « une seule fois ».
-4. **Commit Git** de cette étape pas encore fait.
-5. Le planning a environ une semaine de retard : la semaine S3 (RAG) commence aujourd'hui, 4 novembre.
+1. **Combien d'incidents donner aux agents ?** Le budget en laisse 185 sur test_inconnu, soit beaucoup d'appels LLM. Proposition : pour l'évaluation (notebook 08), un échantillon fixé à l'avance avec tous les incidents avec attaque et une partie tirée au sort des incidents sans attaque, y compris hors budget.
+2. **Commit Git** des étapes 9, 10 et 11 pas encore fait.
+3. Le planning a environ une semaine de retard : la semaine S3 (RAG) a commencé le 4 novembre, et il reste à commencer le notebook 06.
 
 ## Prochaine étape prévue
 
-`notebooks/05_fusion_incidents.ipynb` : fusion du modèle supervisé et du détecteur (attaque connue → étiquette ; détecteur seul → « inconnu »), puis regroupement des flux suspects par IP source et fenêtre de temps en incidents JSON, avec les explications SHAP.
+`notebooks/06_rag_attack.ipynb` : bases ATT&CK, mitigations et D3FEND dans ChromaDB et BM25. Attention : ChromaDB, BM25, et sans doute un modèle d'embeddings restent à installer sur la connexion 4G. Prévenir Bedis de la taille avant de télécharger.

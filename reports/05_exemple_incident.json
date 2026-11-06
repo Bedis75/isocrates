@@ -1,0 +1,101 @@
+{
+  "id": "INC-test_inconnu-0014",
+  "src_addr": "172.16.0.1",
+  "debut_utc": "2017-07-07 17:51:06",
+  "fin_utc": "2017-07-07 17:56:00",
+  "debut_local": "2017-07-07 14:51:06",
+  "duree_s": 293.7,
+  "nb_flux": 139586,
+  "etiquettes": {
+    "inconnu": 139578,
+    "dos_hulk": 8
+  },
+  "sources": {
+    "anomalie": 139578,
+    "supervisé": 8
+  },
+  "nb_machines_dst": 2,
+  "nb_ports_dst": 999,
+  "machines_dst": {
+    "192.168.10.50": 139585,
+    "192.168.10.51": 1
+  },
+  "ports_dst": {
+    "80": 144,
+    "256": 140,
+    "139": 140,
+    "1723": 140,
+    "23": 140
+  },
+  "protocoles": {
+    "6": 139585,
+    "1": 1
+  },
+  "score_anomalie": {
+    "max": 5.1383,
+    "moyen": 1.3829,
+    "seuil": 0.182
+  },
+  "proba_rf_max": 0.81,
+  "fenetre_max": {
+    "w_conn": 44865.0,
+    "w_dst_ports": 998.0,
+    "w_dst_hosts": 2.0,
+    "w_rst_rate": 0.994
+  },
+  "explication_autoencodeur": [
+    {
+      "colonne": "w_rst_rate",
+      "valeur": 0.994,
+      "erreur": 272.3541
+    },
+    {
+      "colonne": "w_dst_ports",
+      "valeur": 998.0,
+      "erreur": 23.3719
+    },
+    {
+      "colonne": "w_dst_hosts",
+      "valeur": 2.0,
+      "erreur": 21.3619
+    },
+    {
+      "colonne": "down_up_ratio",
+      "valeur": 0.333,
+      "erreur": 15.5143
+    },
+    {
+      "colonne": "bwd_pkt_len_mean",
+      "valeur": 0.0,
+      "erreur": 7.2381
+    }
+  ],
+  "etiquette_expliquee": "dos_hulk",
+  "explication_rf": [
+    {
+      "colonne": "w_conn",
+      "valeur": 34896.0,
+      "shap": 0.258
+    },
+    {
+      "colonne": "w_dst_hosts",
+      "valeur": 1.0,
+      "shap": 0.0359
+    },
+    {
+      "colonne": "w_rst_rate",
+      "valeur": 0.994,
+      "shap": -0.034
+    },
+    {
+      "colonne": "bwd_pkt_len_mean",
+      "valeur": 0.0,
+      "shap": -0.0183
+    },
+    {
+      "colonne": "w_dst_ports",
+      "valeur": 998.0,
+      "shap": -0.0172
+    }
+  ]
+}
